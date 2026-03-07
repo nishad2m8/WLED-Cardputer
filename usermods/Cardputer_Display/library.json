@@ -1,0 +1,10 @@
+{
+  "name": "Cardputer_Display",
+  "build": {
+    "libArchive": false,
+    "srcFilter": ["+<*.cpp>", "+<ui/*.c>"]
+  },
+  "dependencies": {
+    "m5stack/M5GFX": "^0.2.0"
+  }
+}
