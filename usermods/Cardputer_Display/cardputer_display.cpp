@@ -1,5 +1,6 @@
 #include "wled.h"
 #include <M5Cardputer.h>
+#include <Preferences.h>
 #include <lvgl.h>
 #include "lvgl_setup.h"
 #include "ui/ui.h"
@@ -10,10 +11,142 @@
 
 class CardputerDisplayUsermod : public Usermod {
   private:
+    static constexpr uint8_t UNASSIGNED_EFFECT = 0xFF;
     bool initDone = false;
+    bool helpVisible = false;
+    bool shortcutMode = false;
+    bool shortcutPreferencesReady = false;
+    uint8_t effectShortcuts[5] = {
+      UNASSIGNED_EFFECT, UNASSIGNED_EFFECT, UNASSIGNED_EFFECT,
+      UNASSIGNED_EFFECT, UNASSIGNED_EFFECT
+    };
+    uint8_t selectedEffect = 0;
+    Preferences shortcutPreferences;
+    lv_obj_t* helpScreen = nullptr;
+    lv_obj_t* shortcutScreen = nullptr;
+    lv_obj_t* shortcutLabel = nullptr;
+    lv_obj_t* batteryLabel = nullptr;
     unsigned long lastRefresh = 0;
     unsigned long lastTickTime = 0;
     static const unsigned long REFRESH_RATE_MS = 500;
+
+    void createHelpScreen() {
+      helpScreen = lv_obj_create(nullptr);
+      lv_obj_set_style_bg_color(helpScreen, lv_color_black(), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(helpScreen, LV_OPA_COVER, LV_PART_MAIN);
+
+      lv_obj_t* helpLabel = lv_label_create(helpScreen);
+      lv_label_set_text(helpLabel,
+        "KEYBOARD HELP\n"
+        "G0  Toggle LEDs\n"
+        "f  Fade LEDs on/off\n"
+        "c  Configure effect keys\n"
+        ",  Brightness -25\n"
+        "/  Brightness +25\n"
+        ";  Next effect\n"
+        ".  Previous effect\n"
+        "h  Back to main");
+      lv_obj_set_style_text_color(helpLabel, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_text_font(helpLabel, &lv_font_montserrat_12, LV_PART_MAIN);
+      lv_obj_align(helpLabel, LV_ALIGN_TOP_LEFT, 10, 6);
+    }
+
+    void getEffectName(uint8_t effect, char* buffer, size_t bufferSize) {
+      if (bufferSize == 0) return;
+      strncpy(buffer, strip.getModeData(effect), bufferSize - 1);
+      buffer[bufferSize - 1] = '\0';
+      char* parameter = strchr(buffer, '@');
+      if (parameter) *parameter = '\0';
+    }
+
+    void updateShortcutScreen() {
+      char selectedName[32];
+      char shortcutNames[5][32];
+      char screenText[256];
+      getEffectName(selectedEffect, selectedName, sizeof(selectedName));
+
+      for (uint8_t index = 0; index < 5; index++) {
+        if (effectShortcuts[index] == UNASSIGNED_EFFECT) {
+          strcpy(shortcutNames[index], "--");
+        } else {
+          getEffectName(effectShortcuts[index], shortcutNames[index], sizeof(shortcutNames[index]));
+        }
+      }
+
+      snprintf(screenText, sizeof(screenText),
+        "SET EFFECT KEYS\n"
+        "Selected: %s\n"
+        ". Previous  ; Next\n"
+        "1: %s  2: %s\n"
+        "3: %s  4: %s\n"
+        "5: %s\n"
+        "Press 1-5 to assign\n"
+        "c: return",
+        selectedName,
+        shortcutNames[0], shortcutNames[1], shortcutNames[2], shortcutNames[3], shortcutNames[4]);
+      lv_label_set_text(shortcutLabel, screenText);
+    }
+
+    void createShortcutScreen() {
+      shortcutScreen = lv_obj_create(nullptr);
+      lv_obj_set_style_bg_color(shortcutScreen, lv_color_black(), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(shortcutScreen, LV_OPA_COVER, LV_PART_MAIN);
+
+      shortcutLabel = lv_label_create(shortcutScreen);
+      lv_obj_set_style_text_color(shortcutLabel, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_text_font(shortcutLabel, &lv_font_montserrat_12, LV_PART_MAIN);
+      lv_obj_align(shortcutLabel, LV_ALIGN_TOP_LEFT, 8, 3);
+      updateShortcutScreen();
+    }
+
+    void createBatteryIndicator() {
+      lv_obj_set_pos(objects.label_date, 50, 36);
+      lv_obj_set_width(objects.label_date, 85);
+
+      lv_obj_set_pos(objects.label_current, 3, 51);
+      lv_obj_set_size(objects.label_current, 45, LV_SIZE_CONTENT);
+      lv_obj_set_style_text_font(objects.label_current, &lv_font_montserrat_12, LV_PART_MAIN);
+      lv_obj_set_style_text_letter_space(objects.label_current, 0, LV_PART_MAIN);
+
+      batteryLabel = lv_label_create(objects.main);
+      lv_obj_set_pos(batteryLabel, 50, 51);
+      lv_obj_set_size(batteryLabel, 43, LV_SIZE_CONTENT);
+      lv_label_set_long_mode(batteryLabel, LV_LABEL_LONG_CLIP);
+      lv_obj_set_style_text_font(batteryLabel, &lv_font_montserrat_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(batteryLabel, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+      lv_label_set_text(batteryLabel, "B:--");
+
+      lv_obj_set_pos(objects.label_freeheap, 96, 51);
+      lv_obj_set_size(objects.label_freeheap, 39, LV_SIZE_CONTENT);
+      lv_obj_set_style_text_font(objects.label_freeheap, &lv_font_montserrat_12, LV_PART_MAIN);
+      lv_obj_set_style_text_letter_space(objects.label_freeheap, 0, LV_PART_MAIN);
+    }
+
+    void openShortcutConfig() {
+      selectedEffect = strip.getSegment(strip.getMainSegmentId()).mode;
+      shortcutMode = true;
+      updateShortcutScreen();
+      lv_scr_load_anim(shortcutScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    }
+
+    void assignEffectShortcut(uint8_t index) {
+      effectShortcuts[index] = selectedEffect;
+      if (shortcutPreferencesReady) {
+        char keyName[5];
+        snprintf(keyName, sizeof(keyName), "key%u", index + 1);
+        shortcutPreferences.putUChar(keyName, selectedEffect);
+      }
+      updateShortcutScreen();
+    }
+
+    void activateEffectShortcut(uint8_t index) {
+      uint8_t effect = effectShortcuts[index];
+      if (effect == UNASSIGNED_EFFECT || effect >= strip.getModeCount()) return;
+
+      strip.getSegment(strip.getMainSegmentId()).setMode(effect);
+      setValuesFromMainSeg();
+      stateChanged = true;
+    }
 
     // Keyboard handling
     void handleKeyboard() {
@@ -24,7 +157,53 @@ class CardputerDisplayUsermod : public Usermod {
 
         for (auto key : status.word) {
           uint8_t newFx;
+
+          if (shortcutMode) {
+            if (key == 'c' || key == 'C') {
+              shortcutMode = false;
+              loadScreen(SCREEN_ID_MAIN);
+            } else if (key == '.') {
+              selectedEffect = (selectedEffect + strip.getModeCount() - 1) % strip.getModeCount();
+              updateShortcutScreen();
+            } else if (key == ';') {
+              selectedEffect = (selectedEffect + 1) % strip.getModeCount();
+              updateShortcutScreen();
+            } else if (key >= '1' && key <= '5') {
+              assignEffectShortcut(key - '1');
+            }
+            continue;
+          }
+
           switch (key) {
+            case 'h':
+            case 'H':
+              helpVisible = !helpVisible;
+              if (helpVisible) {
+                lv_scr_load_anim(helpScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+              } else {
+                loadScreen(SCREEN_ID_MAIN);
+              }
+              break;
+
+            case 'f':
+            case 'F':
+              toggleOnOff();
+              stateUpdated(CALL_MODE_BUTTON);
+              break;
+
+            case 'c':
+            case 'C':
+              openShortcutConfig();
+              break;
+
+            case '1':
+            case '2':
+            case '3':
+            case '4':
+            case '5':
+              activateEffectShortcut(key - '1');
+              break;
+
             case ';':  // FX up (next effect)
               newFx = (strip.getSegment(strip.getMainSegmentId()).mode + 1) % strip.getModeCount();
               strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
@@ -82,6 +261,19 @@ class CardputerDisplayUsermod : public Usermod {
 
       // Initialize UI (creates screens and loads main screen)
       ui_init();
+      createBatteryIndicator();
+      createHelpScreen();
+      createShortcutScreen();
+
+      shortcutPreferencesReady = shortcutPreferences.begin("cardkeys", false);
+      if (shortcutPreferencesReady) {
+        for (uint8_t index = 0; index < 5; index++) {
+          char keyName[5];
+          snprintf(keyName, sizeof(keyName), "key%u", index + 1);
+          effectShortcuts[index] = shortcutPreferences.getUChar(keyName, UNASSIGNED_EFFECT);
+        }
+        updateShortcutScreen();
+      }
 
       // Create FreeRTOS task for LVGL tick
       xTaskCreatePinnedToCore(lv_tick_task, "lv_tick_task", 4096, NULL, 5, NULL, 1);
@@ -187,8 +379,18 @@ class CardputerDisplayUsermod : public Usermod {
       // Update Free Heap
       uint32_t freeHeap = ESP.getFreeHeap();
       char heapStr[16];
-      snprintf(heapStr, sizeof(heapStr), "%.1fkb", freeHeap / 1024.0f);
+      snprintf(heapStr, sizeof(heapStr), "%luKB", (unsigned long)((freeHeap + 512) / 1024));
       lv_label_set_text(objects.label_freeheap, heapStr);
+
+      // Update battery charge estimate; M5Unified reports negative values when unavailable.
+      int32_t batteryLevel = M5Cardputer.Power.getBatteryLevel();
+      char batteryStr[12];
+      if (batteryLevel >= 0) {
+        snprintf(batteryStr, sizeof(batteryStr), "B:%ld%%", (long)batteryLevel);
+      } else {
+        snprintf(batteryStr, sizeof(batteryStr), "B:--");
+      }
+      lv_label_set_text(batteryLabel, batteryStr);
 
       // Call UI tick for any animations
       ui_tick();

@@ -46,8 +46,14 @@ Built on top of [WLED](https://kno.wled.ge) by [Aircoookie](https://github.com/A
 | `/` | Brightness up |
 | `;` | Next effect |
 | `.` | Previous effect |
+| `f` | Fade LEDs on/off |
+| `h` | Show or hide keyboard help |
+| `c` | Configure effects for keys `1`–`5` |
+| `1`–`5` | Start the assigned effect |
 
 Brightness changes in steps of 25 (0–255 scale).
+The `f` key uses WLED's configured transition time.
+Press `c`, browse effects with `.` and `;`, then press `1`–`5` to assign the selected effect. Assignments are saved across restarts.
 
 ## Display Info
 
@@ -56,6 +62,7 @@ The Cardputer's built-in screen shows:
 - WiFi SSID and IP address
 - LED pin and count
 - Brightness (value and bar)
+- Battery charge estimate
 - Current effect name
 - Time and date
 - Estimated current draw
