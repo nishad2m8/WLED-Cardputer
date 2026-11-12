@@ -40,7 +40,8 @@ class CardputerDisplayUsermod : public Usermod {
     lv_obj_t* helpScreen = nullptr;
     lv_obj_t* helpContent = nullptr;
     lv_obj_t* shortcutScreen = nullptr;
-    lv_obj_t* shortcutLabel = nullptr;
+    lv_obj_t* selectedEffectLabel = nullptr;
+    lv_obj_t* effectAssignmentLabels[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* pinScreen = nullptr;
     lv_obj_t* pinList = nullptr;
     lv_obj_t* pinFooter = nullptr;
@@ -325,41 +326,98 @@ class CardputerDisplayUsermod : public Usermod {
 
     void updateShortcutScreen() {
       char selectedName[32];
-      char shortcutNames[5][32];
-      char screenText[256];
+      char selectedText[48];
       getEffectName(selectedEffect, selectedName, sizeof(selectedName));
+      snprintf(selectedText, sizeof(selectedText), "Selected: %s", selectedName);
+      lv_label_set_text(selectedEffectLabel, selectedText);
 
       for (uint8_t index = 0; index < 5; index++) {
+        char shortcutName[32];
         if (effectShortcuts[index] == UNASSIGNED_EFFECT) {
-          strcpy(shortcutNames[index], "--");
+          strcpy(shortcutName, "--");
         } else {
-          getEffectName(effectShortcuts[index], shortcutNames[index], sizeof(shortcutNames[index]));
+          getEffectName(effectShortcuts[index], shortcutName, sizeof(shortcutName));
         }
+        lv_label_set_text(effectAssignmentLabels[index], shortcutName);
       }
-
-      snprintf(screenText, sizeof(screenText),
-        "SET EFFECT KEYS\n"
-        "Selected: %s\n"
-        ". Previous  ; Next\n"
-        "1: %s  2: %s\n"
-        "3: %s  4: %s\n"
-        "5: %s\n"
-        "Press 1-5 to assign\n"
-        "c: return",
-        selectedName,
-        shortcutNames[0], shortcutNames[1], shortcutNames[2], shortcutNames[3], shortcutNames[4]);
-      lv_label_set_text(shortcutLabel, screenText);
     }
 
     void createShortcutScreen() {
       shortcutScreen = lv_obj_create(nullptr);
+      lv_obj_remove_flag(shortcutScreen, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_style_pad_all(shortcutScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_border_width(shortcutScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(shortcutScreen, 0, LV_PART_MAIN);
       lv_obj_set_style_bg_color(shortcutScreen, lv_color_black(), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(shortcutScreen, LV_OPA_COVER, LV_PART_MAIN);
 
-      shortcutLabel = lv_label_create(shortcutScreen);
-      lv_obj_set_style_text_color(shortcutLabel, lv_color_white(), LV_PART_MAIN);
-      lv_obj_set_style_text_font(shortcutLabel, &lv_font_montserrat_12, LV_PART_MAIN);
-      lv_obj_align(shortcutLabel, LV_ALIGN_TOP_LEFT, 8, 3);
+      lv_obj_t* title = lv_label_create(shortcutScreen);
+      lv_label_set_text(title, "SET EFFECT KEYS");
+      lv_obj_set_pos(title, 6, 2);
+      lv_obj_set_style_text_color(title, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+      lv_obj_set_style_text_font(title, &ui_font_bsb_18, LV_PART_MAIN);
+
+      lv_obj_t* topDivider = lv_obj_create(shortcutScreen);
+      lv_obj_set_pos(topDivider, 6, 23);
+      lv_obj_set_size(topDivider, 228, 2);
+      lv_obj_set_style_bg_color(topDivider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(topDivider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(topDivider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(topDivider, 0, LV_PART_MAIN);
+
+      selectedEffectLabel = lv_label_create(shortcutScreen);
+      lv_obj_set_pos(selectedEffectLabel, 6, 29);
+      lv_obj_set_size(selectedEffectLabel, 228, 18);
+      lv_label_set_long_mode(selectedEffectLabel, LV_LABEL_LONG_SCROLL_CIRCULAR);
+      lv_obj_set_style_text_color(selectedEffectLabel, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+      lv_obj_set_style_text_font(selectedEffectLabel, &ui_font_bsb_15, LV_PART_MAIN);
+
+      lv_obj_t* navigation = lv_label_create(shortcutScreen);
+      lv_label_set_text(navigation, "; Next   . Previous effect");
+      lv_obj_set_pos(navigation, 6, 48);
+      lv_obj_set_style_text_color(navigation, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_text_font(navigation, &ui_font_br_13, LV_PART_MAIN);
+
+      lv_obj_t* assignmentsTitle = lv_label_create(shortcutScreen);
+      lv_label_set_text(assignmentsTitle, "ASSIGNED EFFECTS");
+      lv_obj_set_pos(assignmentsTitle, 6, 62);
+      lv_obj_set_style_text_color(assignmentsTitle, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_text_font(assignmentsTitle, &ui_font_bsb_15, LV_PART_MAIN);
+
+      const char* keyLabels[] = {"1", "2", "3", "4", "5"};
+      for (uint8_t index = 0; index < 5; index++) {
+        uint8_t column = index % 2;
+        uint8_t row = index / 2;
+        int16_t x = column ? 122 : 6;
+        int16_t y = 78 + row * 13;
+
+        lv_obj_t* keyLabel = lv_label_create(shortcutScreen);
+        lv_label_set_text(keyLabel, keyLabels[index]);
+        lv_obj_set_pos(keyLabel, x, y);
+        lv_obj_set_style_text_color(keyLabel, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+        lv_obj_set_style_text_font(keyLabel, &ui_font_bsb_15, LV_PART_MAIN);
+
+        effectAssignmentLabels[index] = lv_label_create(shortcutScreen);
+        lv_obj_set_pos(effectAssignmentLabels[index], x + 17, y);
+        lv_obj_set_width(effectAssignmentLabels[index], column ? 95 : 91);
+        lv_label_set_long_mode(effectAssignmentLabels[index], LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_color(effectAssignmentLabels[index], lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_text_font(effectAssignmentLabels[index], &ui_font_br_13, LV_PART_MAIN);
+      }
+
+      lv_obj_t* bottomDivider = lv_obj_create(shortcutScreen);
+      lv_obj_set_pos(bottomDivider, 6, 119);
+      lv_obj_set_size(bottomDivider, 228, 1);
+      lv_obj_set_style_bg_color(bottomDivider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(bottomDivider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(bottomDivider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
+
+      lv_obj_t* footer = lv_label_create(shortcutScreen);
+      lv_label_set_text(footer, "1-5 Assign   C Back");
+      lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
+      lv_obj_set_style_text_color(footer, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_text_font(footer, &ui_font_br_13, LV_PART_MAIN);
       updateShortcutScreen();
     }
 
