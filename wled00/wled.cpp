@@ -772,6 +772,8 @@ void WLED::initInterfaces()
 
 void WLED::handleConnection()
 {
+  if (cardputerWifiDisabled) return;
+
   static bool scanDone = true;
   static byte stacO = 0;
   const unsigned long now = millis();
