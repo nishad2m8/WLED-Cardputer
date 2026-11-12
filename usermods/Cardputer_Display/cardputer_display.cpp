@@ -6,6 +6,13 @@
 #include "ui/ui.h"
 #include "ui/screens.h"
 
+extern "C" {
+  extern const lv_font_t ui_font_br_13;
+  extern const lv_font_t ui_font_br_15;
+  extern const lv_font_t ui_font_bsb_15;
+  extern const lv_font_t ui_font_bsb_18;
+}
+
 // Brightness step for keyboard control (0-255 scale)
 #define BRIGHTNESS_STEP 25
 
@@ -23,6 +30,7 @@ class CardputerDisplayUsermod : public Usermod {
     uint8_t selectedEffect = 0;
     Preferences shortcutPreferences;
     lv_obj_t* helpScreen = nullptr;
+    lv_obj_t* helpContent = nullptr;
     lv_obj_t* shortcutScreen = nullptr;
     lv_obj_t* shortcutLabel = nullptr;
     lv_obj_t* batteryLabel = nullptr;
@@ -32,23 +40,88 @@ class CardputerDisplayUsermod : public Usermod {
 
     void createHelpScreen() {
       helpScreen = lv_obj_create(nullptr);
+      lv_obj_remove_flag(helpScreen, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_style_pad_all(helpScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_border_width(helpScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(helpScreen, 0, LV_PART_MAIN);
       lv_obj_set_style_bg_color(helpScreen, lv_color_black(), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(helpScreen, LV_OPA_COVER, LV_PART_MAIN);
 
-      lv_obj_t* helpLabel = lv_label_create(helpScreen);
-      lv_label_set_text(helpLabel,
-        "KEYBOARD HELP\n"
-        "G0  Toggle LEDs\n"
-        "f  Fade LEDs on/off\n"
-        "c  Configure effect keys\n"
-        ",  Brightness -25\n"
-        "/  Brightness +25\n"
-        ";  Next effect\n"
-        ".  Previous effect\n"
-        "h  Back to main");
-      lv_obj_set_style_text_color(helpLabel, lv_color_white(), LV_PART_MAIN);
-      lv_obj_set_style_text_font(helpLabel, &lv_font_montserrat_12, LV_PART_MAIN);
-      lv_obj_align(helpLabel, LV_ALIGN_TOP_LEFT, 10, 6);
+      lv_obj_t* title = lv_label_create(helpScreen);
+      lv_label_set_text(title, "KEYBOARD HELP");
+      lv_obj_set_pos(title, 6, 2);
+      lv_obj_set_style_text_color(title, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+      lv_obj_set_style_text_font(title, &ui_font_bsb_18, LV_PART_MAIN);
+
+      lv_obj_t* topDivider = lv_obj_create(helpScreen);
+      lv_obj_set_pos(topDivider, 6, 24);
+      lv_obj_set_size(topDivider, 228, 2);
+      lv_obj_set_style_bg_color(topDivider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(topDivider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(topDivider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(topDivider, 0, LV_PART_MAIN);
+
+      helpContent = lv_obj_create(helpScreen);
+      lv_obj_set_pos(helpContent, 6, 29);
+      lv_obj_set_size(helpContent, 228, 84);
+      lv_obj_set_style_bg_opa(helpContent, LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_border_width(helpContent, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(helpContent, 0, LV_PART_MAIN);
+      lv_obj_set_style_pad_all(helpContent, 0, LV_PART_MAIN);
+      lv_obj_set_scroll_dir(helpContent, LV_DIR_VER);
+      lv_obj_set_scrollbar_mode(helpContent, LV_SCROLLBAR_MODE_OFF);
+
+      int32_t contentY = 0;
+      auto addSection = [&](const char* text) {
+        lv_obj_t* label = lv_label_create(helpContent);
+        lv_label_set_text(label, text);
+        lv_obj_set_pos(label, 0, contentY);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+        lv_obj_set_style_text_font(label, &ui_font_bsb_15, LV_PART_MAIN);
+        contentY += 17;
+      };
+      auto addRow = [&](const char* key, const char* description) {
+        lv_obj_t* keyLabel = lv_label_create(helpContent);
+        lv_label_set_text(keyLabel, key);
+        lv_obj_set_pos(keyLabel, 0, contentY);
+        lv_obj_set_width(keyLabel, 60);
+        lv_obj_set_style_text_color(keyLabel, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+        lv_obj_set_style_text_font(keyLabel, &ui_font_bsb_15, LV_PART_MAIN);
+
+        lv_obj_t* descriptionLabel = lv_label_create(helpContent);
+        lv_label_set_text(descriptionLabel, description);
+        lv_obj_set_pos(descriptionLabel, 62, contentY);
+        lv_obj_set_width(descriptionLabel, 166);
+        lv_obj_set_style_text_color(descriptionLabel, lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_text_font(descriptionLabel, &ui_font_br_15, LV_PART_MAIN);
+        contentY += 16;
+      };
+
+      addSection("LED CONTROL");
+      addRow("BTN G0", "Toggle LEDs");
+      addRow("f", "Toggle LEDs");
+      addSection("EFFECTS");
+      addRow("c", "Configure effect keys");
+      addRow("1-5", "Activate assigned effect");
+      addRow("; / .", "Next / previous effect");
+      addSection("BRIGHTNESS");
+      addRow(", /", "Decrease / increase");
+      addSection("HELP");
+      addRow("; / .", "Scroll up / down");
+
+      lv_obj_t* bottomDivider = lv_obj_create(helpScreen);
+      lv_obj_set_pos(bottomDivider, 6, 117);
+      lv_obj_set_size(bottomDivider, 228, 1);
+      lv_obj_set_style_bg_color(bottomDivider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(bottomDivider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(bottomDivider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
+
+      lv_obj_t* footer = lv_label_create(helpScreen);
+      lv_label_set_text(footer, "; Up   . Down   H Close");
+      lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
+      lv_obj_set_style_text_color(footer, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_text_font(footer, &ui_font_br_13, LV_PART_MAIN);
     }
 
     void getEffectName(uint8_t effect, char* buffer, size_t bufferSize) {
@@ -204,23 +277,31 @@ class CardputerDisplayUsermod : public Usermod {
               activateEffectShortcut(key - '1');
               break;
 
-            case ';':  // FX up (next effect)
-              newFx = (strip.getSegment(strip.getMainSegmentId()).mode + 1) % strip.getModeCount();
-              strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
-              setValuesFromMainSeg();
-              stateChanged = true;
+            case ';':  // Scroll help up or select the next effect
+              if (helpVisible) {
+                lv_obj_scroll_by_bounded(helpContent, 0, 24, LV_ANIM_ON);
+              } else {
+                newFx = (strip.getSegment(strip.getMainSegmentId()).mode + 1) % strip.getModeCount();
+                strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
+                setValuesFromMainSeg();
+                stateChanged = true;
+              }
               break;
 
-            case '.':  // FX down (previous effect)
-              newFx = strip.getSegment(strip.getMainSegmentId()).mode;
-              if (newFx == 0) {
-                newFx = strip.getModeCount() - 1;
+            case '.':  // Scroll help down or select the previous effect
+              if (helpVisible) {
+                lv_obj_scroll_by_bounded(helpContent, 0, -24, LV_ANIM_ON);
               } else {
-                newFx--;
+                newFx = strip.getSegment(strip.getMainSegmentId()).mode;
+                if (newFx == 0) {
+                  newFx = strip.getModeCount() - 1;
+                } else {
+                  newFx--;
+                }
+                strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
+                setValuesFromMainSeg();
+                stateChanged = true;
               }
-              strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
-              setValuesFromMainSeg();
-              stateChanged = true;
               break;
 
             case ',':  // Brightness down (left)
