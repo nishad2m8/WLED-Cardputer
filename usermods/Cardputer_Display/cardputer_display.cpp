@@ -252,7 +252,7 @@ class CardputerDisplayUsermod : public Usermod {
       M5Cardputer.begin(cfg, true);  // true = enable keyboard
 
       // Configure display
-      M5Cardputer.Display.setRotation(1);  // Landscape for Cardputer
+      M5Cardputer.Display.setRotation(0);  // M5GFX 0.3.x applies the Cardputer landscape offset
       M5Cardputer.Display.fillScreen(TFT_BLACK);
       M5Cardputer.Display.setBrightness(128);
 
