@@ -28,24 +28,35 @@ class CardputerDisplayUsermod : public Usermod {
     bool helpVisible = false;
     bool shortcutMode = false;
     bool pinConfigMode = false;
-    bool pinReturnToHelp = false;
+    bool configMenuMode = false;
+    bool configEditMode = false;
     bool shortcutPreferencesReady = false;
     uint8_t effectShortcuts[5] = {
       UNASSIGNED_EFFECT, UNASSIGNED_EFFECT, UNASSIGNED_EFFECT,
       UNASSIGNED_EFFECT, UNASSIGNED_EFFECT
     };
     uint8_t selectedEffect = 0;
+    uint8_t selectedConfigOption = 0;
     size_t selectedPinOption = 0;
+    uint16_t configEditValue = 0;
+    char ledCountInput[6] = {0};
+    uint8_t ledCountInputLength = 0;
+    bool configInputError = false;
     Preferences shortcutPreferences;
     lv_obj_t* helpScreen = nullptr;
     lv_obj_t* helpContent = nullptr;
     lv_obj_t* shortcutScreen = nullptr;
     lv_obj_t* selectedEffectLabel = nullptr;
     lv_obj_t* effectAssignmentLabels[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* configMenuScreen = nullptr;
+    lv_obj_t* configOptionRows[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* configOptionLabels[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* configMenuFooter = nullptr;
     lv_obj_t* pinScreen = nullptr;
     lv_obj_t* pinList = nullptr;
     lv_obj_t* pinFooter = nullptr;
     lv_obj_t* batteryLabel = nullptr;
+    lv_obj_t* batteryLevelBar = nullptr;
     std::vector<OutputPinOption> outputPinOptions;
     std::vector<lv_obj_t*> outputPinRows;
     unsigned long lastRefresh = 0;
@@ -114,15 +125,14 @@ class CardputerDisplayUsermod : public Usermod {
       addSection("LED CONTROL");
       addRow("BTN G0", "Toggle LEDs");
       addRow("f", "Toggle LEDs");
-      addRow("g", "Configure LED output pin");
       addSection("EFFECTS");
-      addRow("c", "Configure effect keys");
+      addRow("c", "LED and effect setup");
       addRow("1-5", "Activate assigned effect");
       addRow("; / .", "Next / previous effect");
       addSection("BRIGHTNESS");
       addRow(", /", "Decrease / increase");
       addSection("HELP");
-      addRow("; / .", "Scroll up / down");
+      addRow("; / .", "Scroll down / up");
 
       lv_obj_t* bottomDivider = lv_obj_create(helpScreen);
       lv_obj_set_pos(bottomDivider, 6, 117);
@@ -133,7 +143,7 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
 
       lv_obj_t* footer = lv_label_create(helpScreen);
-      lv_label_set_text(footer, "; Up   . Down   H Close");
+      lv_label_set_text(footer, "; Down   . Up   H Close");
       lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
       lv_obj_set_style_text_color(footer, lv_color_white(), LV_PART_MAIN);
       lv_obj_set_style_text_font(footer, &ui_font_br_13, LV_PART_MAIN);
@@ -144,6 +154,17 @@ class CardputerDisplayUsermod : public Usermod {
       if (!bus) return 0xFF;
       uint8_t pins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
       return bus->getPins(pins) > 0 ? pins[0] : 0xFF;
+    }
+
+    uint16_t getCurrentOutputLength() {
+      Bus* bus = BusManager::getBus(0);
+      return bus ? bus->getLength() : 0;
+    }
+
+    uint16_t getMaxOutputLength() {
+      Bus* bus = BusManager::getBus(0);
+      if (!bus || bus->getStart() >= MAX_LEDS) return 0;
+      return std::min((uint16_t)MAX_LEDS_PER_BUS, (uint16_t)(MAX_LEDS - bus->getStart()));
     }
 
     bool isCardputerPeripheralPin(uint8_t gpio) const {
@@ -172,7 +193,7 @@ class CardputerDisplayUsermod : public Usermod {
       if (!outputPinRows.empty()) {
         lv_obj_scroll_to_view(outputPinRows[selectedPinOption], LV_ANIM_ON);
       }
-      lv_label_set_text(pinFooter, ";/. Move   Enter Set   G Back");
+        lv_label_set_text(pinFooter, "; Down  . Up  Enter Set  C Back");
     }
 
     void createOutputPinScreen() {
@@ -256,8 +277,9 @@ class CardputerDisplayUsermod : public Usermod {
 
     void openOutputPinMenu() {
       if (outputPinOptions.empty()) return;
-      pinReturnToHelp = helpVisible;
       helpVisible = false;
+      configMenuMode = false;
+      configEditMode = false;
       pinConfigMode = true;
       selectedPinOption = 0;
       uint8_t currentPin = getCurrentOutputPin();
@@ -273,21 +295,23 @@ class CardputerDisplayUsermod : public Usermod {
 
     void closeOutputPinMenu() {
       pinConfigMode = false;
-      if (pinReturnToHelp) {
-        helpVisible = true;
-        lv_scr_load_anim(helpScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
-      } else {
-        loadScreen(SCREEN_ID_MAIN);
-      }
+      configMenuMode = true;
+      updateConfigMenu();
+      lv_scr_load_anim(configMenuScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
     }
 
-    bool queueOutputPinChange(uint8_t gpio) {
+    bool queueOutputBusChange(uint8_t gpio, uint16_t ledCount) {
       Bus* firstBus = BusManager::getBus(0);
       if (!firstBus || !firstBus->isDigital() || firstBus->is2Pin()) return false;
       uint8_t currentPins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
       if (firstBus->getPins(currentPins) == 0) return false;
-      if (gpio == currentPins[0]) return true;
-      if (!PinManager::isPinOk(gpio, true) || PinManager::isPinAllocated(gpio)) return false;
+      uint16_t start = firstBus->getStart();
+      if (start >= MAX_LEDS) return false;
+      uint16_t maxLedCount = getMaxOutputLength();
+      if (ledCount == 0 || ledCount > maxLedCount) return false;
+      bool pinChanged = gpio != currentPins[0];
+      if (pinChanged && (!PinManager::isPinOk(gpio, true) || PinManager::isPinAllocated(gpio))) return false;
+      if (!pinChanged && ledCount == firstBus->getLength()) return true;
 
       busConfigs.clear();
       for (size_t index = 0; index < BusManager::getNumBusses(); index++) {
@@ -296,8 +320,9 @@ class CardputerDisplayUsermod : public Usermod {
         uint8_t pins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
         bus->getPins(pins);
         if (index == 0) pins[0] = gpio;
+        uint16_t length = index == 0 ? ledCount : bus->getLength();
         uint8_t type = bus->getType() | (bus->isOffRefreshRequired() ? 0x80 : 0);
-        busConfigs.emplace_back(type, pins, bus->getStart(), bus->getLength(), bus->getColorOrder(),
+        busConfigs.emplace_back(type, pins, bus->getStart(), length, bus->getColorOrder(),
                                 bus->isReversed(), bus->skippedLeds(), bus->getAutoWhiteMode(),
                                 bus->getFrequency(), bus->getLEDCurrent(), bus->getMaxCurrent(),
                                 bus->getCustomText());
@@ -309,11 +334,111 @@ class CardputerDisplayUsermod : public Usermod {
 
     void applySelectedOutputPin() {
       if (selectedPinOption >= outputPinOptions.size()) return;
-      if (!queueOutputPinChange(outputPinOptions[selectedPinOption].gpio)) {
-        lv_label_set_text(pinFooter, "Pin unavailable   G Back");
+      if (!queueOutputBusChange(outputPinOptions[selectedPinOption].gpio, getCurrentOutputLength())) {
+        lv_label_set_text(pinFooter, "Pin unavailable   C Back");
         return;
       }
       closeOutputPinMenu();
+    }
+
+    void updateConfigMenu() {
+      char optionText[48];
+      lv_label_set_text(configOptionLabels[0], "Effect key shortcuts");
+      snprintf(optionText, sizeof(optionText), "Output pin: GPIO %u", getCurrentOutputPin());
+      lv_label_set_text(configOptionLabels[1], optionText);
+
+      if (configEditMode && selectedConfigOption == 2) {
+        snprintf(optionText, sizeof(optionText), "LED count: >%s", ledCountInput);
+      } else {
+        snprintf(optionText, sizeof(optionText), "LED count: %u", getCurrentOutputLength());
+      }
+      lv_label_set_text(configOptionLabels[2], optionText);
+
+      uint16_t maxCurrent = configEditMode && selectedConfigOption == 3 ? configEditValue : BusManager::ablMilliampsMax();
+      if (maxCurrent == 0) {
+        lv_label_set_text(configOptionLabels[3], "Max current: Off");
+      } else {
+        snprintf(optionText, sizeof(optionText), "Max current: %u mA", maxCurrent);
+        lv_label_set_text(configOptionLabels[3], optionText);
+      }
+
+      for (uint8_t index = 0; index < 4; index++) {
+        bool selected = index == selectedConfigOption;
+        lv_obj_set_style_bg_color(configOptionRows[index],
+          selected && configEditMode ? lv_color_hex(0xffffd82a) : lv_color_hex(0xffde20e4), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(configOptionRows[index], selected ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_text_color(configOptionLabels[index], selected ? lv_color_black() : lv_color_white(), LV_PART_MAIN);
+      }
+
+      if (configEditMode && selectedConfigOption == 2) {
+        if (configInputError) {
+          char errorText[48];
+          snprintf(errorText, sizeof(errorText), "Valid range: 1-%u LEDs   C Cancel", getMaxOutputLength());
+          lv_label_set_text(configMenuFooter, errorText);
+        } else {
+          lv_label_set_text(configMenuFooter, "Digits  Enter Save  Del Erase  C Cancel");
+        }
+      } else if (configEditMode) {
+        lv_label_set_text(configMenuFooter, ", / Change   Enter Save   C Cancel");
+      } else {
+          lv_label_set_text(configMenuFooter, "; Down  . Up  Enter Select  C Back");
+      }
+    }
+
+    void createConfigMenuScreen() {
+      configMenuScreen = lv_obj_create(nullptr);
+      lv_obj_remove_flag(configMenuScreen, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_style_pad_all(configMenuScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_border_width(configMenuScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(configMenuScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(configMenuScreen, lv_color_black(), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(configMenuScreen, LV_OPA_COVER, LV_PART_MAIN);
+
+      lv_obj_t* title = lv_label_create(configMenuScreen);
+      lv_label_set_text(title, "C MENU");
+      lv_obj_set_pos(title, 6, 2);
+      lv_obj_set_style_text_color(title, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+      lv_obj_set_style_text_font(title, &ui_font_bsb_18, LV_PART_MAIN);
+
+      lv_obj_t* divider = lv_obj_create(configMenuScreen);
+      lv_obj_set_pos(divider, 6, 23);
+      lv_obj_set_size(divider, 228, 2);
+      lv_obj_set_style_bg_color(divider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(divider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(divider, 0, LV_PART_MAIN);
+
+      for (uint8_t index = 0; index < 4; index++) {
+        configOptionRows[index] = lv_obj_create(configMenuScreen);
+        lv_obj_set_pos(configOptionRows[index], 6, 31 + index * 20);
+        lv_obj_set_size(configOptionRows[index], 228, 18);
+        lv_obj_remove_flag(configOptionRows[index], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_opa(configOptionRows[index], LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(configOptionRows[index], 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(configOptionRows[index], 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(configOptionRows[index], 0, LV_PART_MAIN);
+
+        configOptionLabels[index] = lv_label_create(configOptionRows[index]);
+        lv_obj_set_pos(configOptionLabels[index], 3, 0);
+        lv_obj_set_width(configOptionLabels[index], 222);
+        lv_label_set_long_mode(configOptionLabels[index], LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_font(configOptionLabels[index], &ui_font_br_15, LV_PART_MAIN);
+        lv_obj_set_style_text_color(configOptionLabels[index], lv_color_white(), LV_PART_MAIN);
+      }
+
+      lv_obj_t* bottomDivider = lv_obj_create(configMenuScreen);
+      lv_obj_set_pos(bottomDivider, 6, 117);
+      lv_obj_set_size(bottomDivider, 228, 1);
+      lv_obj_set_style_bg_color(bottomDivider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(bottomDivider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(bottomDivider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
+
+      configMenuFooter = lv_label_create(configMenuScreen);
+      lv_obj_align(configMenuFooter, LV_ALIGN_BOTTOM_MID, 0, -2);
+      lv_obj_set_style_text_color(configMenuFooter, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_text_font(configMenuFooter, &ui_font_br_13, LV_PART_MAIN);
+      updateConfigMenu();
     }
 
     void getEffectName(uint8_t effect, char* buffer, size_t bufferSize) {
@@ -414,7 +539,7 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
 
       lv_obj_t* footer = lv_label_create(shortcutScreen);
-      lv_label_set_text(footer, "1-5 Assign   C Back");
+      lv_label_set_text(footer, "1-5 Assign   C Menu");
       lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
       lv_obj_set_style_text_color(footer, lv_color_white(), LV_PART_MAIN);
       lv_obj_set_style_text_font(footer, &ui_font_br_13, LV_PART_MAIN);
@@ -426,17 +551,33 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_width(objects.label_date, 85);
 
       lv_obj_set_pos(objects.label_current, 3, 51);
-      lv_obj_set_size(objects.label_current, 45, LV_SIZE_CONTENT);
+      lv_obj_set_size(objects.label_current, 90, LV_SIZE_CONTENT);
+      lv_label_set_long_mode(objects.label_current, LV_LABEL_LONG_CLIP);
       lv_obj_set_style_text_font(objects.label_current, &lv_font_montserrat_12, LV_PART_MAIN);
+      lv_obj_set_style_text_align(objects.label_current, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
       lv_obj_set_style_text_letter_space(objects.label_current, 0, LV_PART_MAIN);
 
+      batteryLevelBar = lv_bar_create(objects.main);
+      lv_obj_set_pos(batteryLevelBar, 201, 4);
+      lv_obj_set_size(batteryLevelBar, 39, 12);
+      lv_bar_set_range(batteryLevelBar, 0, 100);
+      lv_bar_set_value(batteryLevelBar, 0, LV_ANIM_OFF);
+      lv_obj_set_style_bg_color(batteryLevelBar, lv_color_hex(0xffb0b0b0), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(batteryLevelBar, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(batteryLevelBar, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(batteryLevelBar, 1, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(batteryLevelBar, lv_color_hex(0xff6cff58), LV_PART_INDICATOR);
+      lv_obj_set_style_bg_opa(batteryLevelBar, LV_OPA_COVER, LV_PART_INDICATOR);
+      lv_obj_set_style_radius(batteryLevelBar, 1, LV_PART_INDICATOR);
+
       batteryLabel = lv_label_create(objects.main);
-      lv_obj_set_pos(batteryLabel, 50, 51);
-      lv_obj_set_size(batteryLabel, 43, LV_SIZE_CONTENT);
+      lv_obj_set_pos(batteryLabel, 201, 3);
+      lv_obj_set_size(batteryLabel, 39, LV_SIZE_CONTENT);
       lv_label_set_long_mode(batteryLabel, LV_LABEL_LONG_CLIP);
       lv_obj_set_style_text_font(batteryLabel, &lv_font_montserrat_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(batteryLabel, lv_color_hex(0xffffd82a), LV_PART_MAIN);
-      lv_label_set_text(batteryLabel, "B:--");
+      lv_obj_set_style_text_align(batteryLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+      lv_obj_set_style_text_color(batteryLabel, lv_color_black(), LV_PART_MAIN);
+      lv_label_set_text(batteryLabel, "--%");
 
       lv_obj_set_pos(objects.label_freeheap, 96, 51);
       lv_obj_set_size(objects.label_freeheap, 39, LV_SIZE_CONTENT);
@@ -446,9 +587,86 @@ class CardputerDisplayUsermod : public Usermod {
 
     void openShortcutConfig() {
       selectedEffect = strip.getSegment(strip.getMainSegmentId()).mode;
+      configMenuMode = false;
+      configEditMode = false;
       shortcutMode = true;
       updateShortcutScreen();
       lv_scr_load_anim(shortcutScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    }
+
+    void closeShortcutConfig() {
+      shortcutMode = false;
+      configMenuMode = true;
+      updateConfigMenu();
+      lv_scr_load_anim(configMenuScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    }
+
+    void openConfigMenu() {
+      helpVisible = false;
+      shortcutMode = false;
+      pinConfigMode = false;
+      configMenuMode = true;
+      configEditMode = false;
+      selectedConfigOption = 0;
+      updateConfigMenu();
+      lv_scr_load_anim(configMenuScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    }
+
+    void closeConfigMenu() {
+      configMenuMode = false;
+      configEditMode = false;
+      loadScreen(SCREEN_ID_MAIN);
+    }
+
+    void handleConfigMenuEnter() {
+      if (configEditMode) {
+        bool saved = false;
+        if (selectedConfigOption == 2) {
+          char* end = nullptr;
+          unsigned long enteredCount = strtoul(ledCountInput, &end, 10);
+          uint16_t maxLedCount = getMaxOutputLength();
+          if (ledCountInputLength == 0 || end == ledCountInput || *end != '\0' ||
+              enteredCount < 1 || enteredCount > maxLedCount) {
+            configInputError = true;
+            updateConfigMenu();
+            return;
+          }
+          saved = queueOutputBusChange(getCurrentOutputPin(), (uint16_t)enteredCount);
+          configInputError = !saved;
+        } else if (selectedConfigOption == 3) {
+          BusManager::setMilliampsMax(configEditValue);
+          BusManager::initializeABL();
+          configNeedsWrite = true;
+          saved = true;
+        }
+        if (saved) {
+          configEditMode = false;
+          configInputError = false;
+        }
+        updateConfigMenu();
+        return;
+      }
+
+      switch (selectedConfigOption) {
+        case 0:
+          openShortcutConfig();
+          break;
+        case 1:
+          openOutputPinMenu();
+          break;
+        case 2:
+          ledCountInputLength = 0;
+          ledCountInput[0] = '\0';
+          configInputError = false;
+          configEditMode = true;
+          updateConfigMenu();
+          break;
+        case 3:
+          configEditValue = BusManager::ablMilliampsMax();
+          configEditMode = true;
+          updateConfigMenu();
+          break;
+      }
     }
 
     void assignEffectShortcut(uint8_t index) {
@@ -482,12 +700,12 @@ class CardputerDisplayUsermod : public Usermod {
 
           if (pinConfigMode) {
             if (key == ';') {
-              selectedPinOption = (selectedPinOption + 1) % outputPinOptions.size();
-              updateOutputPinSelection();
-            } else if (key == '.') {
               selectedPinOption = (selectedPinOption + outputPinOptions.size() - 1) % outputPinOptions.size();
               updateOutputPinSelection();
-            } else if (key == 'g' || key == 'G' || key == 'h' || key == 'H') {
+            } else if (key == '.') {
+              selectedPinOption = (selectedPinOption + 1) % outputPinOptions.size();
+              updateOutputPinSelection();
+            } else if (key == 'c' || key == 'C') {
               closeOutputPinMenu();
             }
             continue;
@@ -495,8 +713,7 @@ class CardputerDisplayUsermod : public Usermod {
 
           if (shortcutMode) {
             if (key == 'c' || key == 'C') {
-              shortcutMode = false;
-              loadScreen(SCREEN_ID_MAIN);
+              closeShortcutConfig();
             } else if (key == '.') {
               selectedEffect = (selectedEffect + strip.getModeCount() - 1) % strip.getModeCount();
               updateShortcutScreen();
@@ -505,6 +722,45 @@ class CardputerDisplayUsermod : public Usermod {
               updateShortcutScreen();
             } else if (key >= '1' && key <= '5') {
               assignEffectShortcut(key - '1');
+            }
+            continue;
+          }
+
+          if (configMenuMode) {
+            if (configEditMode) {
+              if (selectedConfigOption == 2 && key >= '0' && key <= '9') {
+                if (ledCountInputLength < sizeof(ledCountInput) - 1) {
+                  ledCountInput[ledCountInputLength++] = key;
+                  ledCountInput[ledCountInputLength] = '\0';
+                  configInputError = false;
+                } else {
+                  configInputError = true;
+                }
+                updateConfigMenu();
+              } else if (selectedConfigOption == 3 && key == ',') {
+                if (selectedConfigOption == 2 && configEditValue > 1) configEditValue--;
+                else configEditValue = configEditValue > 100 ? configEditValue - 100 : 0;
+                updateConfigMenu();
+              } else if (selectedConfigOption == 3 && key == '/') {
+                if (configEditValue <= 64900) {
+                  configEditValue = configEditValue == 0 ? 100 : configEditValue + 100;
+                } else {
+                  configEditValue = 65000;
+                }
+                updateConfigMenu();
+              } else if (key == 'c' || key == 'C') {
+                configEditMode = false;
+                configInputError = false;
+                updateConfigMenu();
+              }
+            } else if (key == ';') {
+              selectedConfigOption = (selectedConfigOption + 3) % 4;
+              updateConfigMenu();
+            } else if (key == '.') {
+              selectedConfigOption = (selectedConfigOption + 1) % 4;
+              updateConfigMenu();
+            } else if (key == 'c' || key == 'C') {
+              closeConfigMenu();
             }
             continue;
           }
@@ -528,12 +784,7 @@ class CardputerDisplayUsermod : public Usermod {
 
             case 'c':
             case 'C':
-              openShortcutConfig();
-              break;
-
-            case 'g':
-            case 'G':
-              openOutputPinMenu();
+              openConfigMenu();
               break;
 
             case '1':
@@ -546,7 +797,7 @@ class CardputerDisplayUsermod : public Usermod {
 
             case ';':  // Scroll help up or select the next effect
               if (helpVisible) {
-                lv_obj_scroll_by_bounded(helpContent, 0, 24, LV_ANIM_ON);
+                lv_obj_scroll_by_bounded(helpContent, 0, -24, LV_ANIM_ON);
               } else {
                 newFx = (strip.getSegment(strip.getMainSegmentId()).mode + 1) % strip.getModeCount();
                 strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
@@ -557,7 +808,7 @@ class CardputerDisplayUsermod : public Usermod {
 
             case '.':  // Scroll help down or select the previous effect
               if (helpVisible) {
-                lv_obj_scroll_by_bounded(helpContent, 0, -24, LV_ANIM_ON);
+                lv_obj_scroll_by_bounded(helpContent, 0, 24, LV_ANIM_ON);
               } else {
                 newFx = strip.getSegment(strip.getMainSegmentId()).mode;
                 if (newFx == 0) {
@@ -591,7 +842,17 @@ class CardputerDisplayUsermod : public Usermod {
           }
         }
 
-        if (pinConfigMode && status.enter) applySelectedOutputPin();
+        if (configMenuMode && configEditMode && selectedConfigOption == 2 && status.del) {
+          if (ledCountInputLength > 0) {
+            ledCountInput[--ledCountInputLength] = '\0';
+            configInputError = false;
+            updateConfigMenu();
+          }
+        }
+        if (status.enter) {
+          if (pinConfigMode) applySelectedOutputPin();
+          else if (configMenuMode) handleConfigMenuEnter();
+        }
       }
     }
 
@@ -615,6 +876,7 @@ class CardputerDisplayUsermod : public Usermod {
       createHelpScreen();
       createShortcutScreen();
       createOutputPinScreen();
+      createConfigMenuScreen();
 
       shortcutPreferencesReady = shortcutPreferences.begin("cardkeys", false);
       if (shortcutPreferencesReady) {
@@ -646,6 +908,7 @@ class CardputerDisplayUsermod : public Usermod {
       lastRefresh = now;
 
       updateDisplay();
+      if (configMenuMode) updateConfigMenu();
     }
 
     void updateDisplay() {
@@ -683,7 +946,7 @@ class CardputerDisplayUsermod : public Usermod {
 
       // Update LED Count
       char ledCountStr[16];
-      snprintf(ledCountStr, sizeof(ledCountStr), "%d", strip.getLengthTotal());
+      snprintf(ledCountStr, sizeof(ledCountStr), "%u", getCurrentOutputLength());
       lv_label_set_text(objects.label_lednos, ledCountStr);
 
       // Update Brightness
@@ -737,9 +1000,15 @@ class CardputerDisplayUsermod : public Usermod {
       int32_t batteryLevel = M5Cardputer.Power.getBatteryLevel();
       char batteryStr[12];
       if (batteryLevel >= 0) {
-        snprintf(batteryStr, sizeof(batteryStr), "B:%ld%%", (long)batteryLevel);
+        snprintf(batteryStr, sizeof(batteryStr), "%ld%%", (long)batteryLevel);
+        lv_bar_set_value(batteryLevelBar, constrain(batteryLevel, 0, 100), LV_ANIM_OFF);
+        lv_color_t batteryColor = batteryLevel <= 20 ? lv_color_hex(0xffff4040)
+          : batteryLevel <= 50 ? lv_color_hex(0xffffd82a) : lv_color_hex(0xff6cff58);
+        lv_obj_set_style_bg_color(batteryLevelBar, batteryColor, LV_PART_INDICATOR);
       } else {
-        snprintf(batteryStr, sizeof(batteryStr), "B:--");
+        snprintf(batteryStr, sizeof(batteryStr), "--%%");
+        lv_bar_set_value(batteryLevelBar, 0, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(batteryLevelBar, lv_color_hex(0xff808080), LV_PART_INDICATOR);
       }
       lv_label_set_text(batteryLabel, batteryStr);
 
