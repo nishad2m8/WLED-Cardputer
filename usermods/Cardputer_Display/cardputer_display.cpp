@@ -18,22 +18,35 @@ extern "C" {
 
 class CardputerDisplayUsermod : public Usermod {
   private:
+    struct OutputPinOption {
+      uint8_t gpio;
+      String label;
+    };
+
     static constexpr uint8_t UNASSIGNED_EFFECT = 0xFF;
     bool initDone = false;
     bool helpVisible = false;
     bool shortcutMode = false;
+    bool pinConfigMode = false;
+    bool pinReturnToHelp = false;
     bool shortcutPreferencesReady = false;
     uint8_t effectShortcuts[5] = {
       UNASSIGNED_EFFECT, UNASSIGNED_EFFECT, UNASSIGNED_EFFECT,
       UNASSIGNED_EFFECT, UNASSIGNED_EFFECT
     };
     uint8_t selectedEffect = 0;
+    size_t selectedPinOption = 0;
     Preferences shortcutPreferences;
     lv_obj_t* helpScreen = nullptr;
     lv_obj_t* helpContent = nullptr;
     lv_obj_t* shortcutScreen = nullptr;
     lv_obj_t* shortcutLabel = nullptr;
+    lv_obj_t* pinScreen = nullptr;
+    lv_obj_t* pinList = nullptr;
+    lv_obj_t* pinFooter = nullptr;
     lv_obj_t* batteryLabel = nullptr;
+    std::vector<OutputPinOption> outputPinOptions;
+    std::vector<lv_obj_t*> outputPinRows;
     unsigned long lastRefresh = 0;
     unsigned long lastTickTime = 0;
     static const unsigned long REFRESH_RATE_MS = 500;
@@ -100,6 +113,7 @@ class CardputerDisplayUsermod : public Usermod {
       addSection("LED CONTROL");
       addRow("BTN G0", "Toggle LEDs");
       addRow("f", "Toggle LEDs");
+      addRow("g", "Configure LED output pin");
       addSection("EFFECTS");
       addRow("c", "Configure effect keys");
       addRow("1-5", "Activate assigned effect");
@@ -122,6 +136,183 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
       lv_obj_set_style_text_color(footer, lv_color_white(), LV_PART_MAIN);
       lv_obj_set_style_text_font(footer, &ui_font_br_13, LV_PART_MAIN);
+    }
+
+    uint8_t getCurrentOutputPin() {
+      Bus* bus = BusManager::getBus(0);
+      if (!bus) return 0xFF;
+      uint8_t pins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+      return bus->getPins(pins) > 0 ? pins[0] : 0xFF;
+    }
+
+    bool isCardputerPeripheralPin(uint8_t gpio) const {
+      return gpio == 0 || (gpio >= 3 && gpio <= 15) || gpio == 21 ||
+             (gpio >= 33 && gpio <= 46);
+    }
+
+    void addOutputPinOption(uint8_t gpio, const char* label, uint8_t currentPin, bool allowBusy = false) {
+      if (!PinManager::isPinOk(gpio, true)) return;
+      if (!allowBusy && gpio != currentPin && PinManager::isPinAllocated(gpio)) return;
+      for (const auto& option : outputPinOptions) {
+        if (option.gpio == gpio) return;
+      }
+      outputPinOptions.push_back({gpio, String(label)});
+    }
+
+    void updateOutputPinSelection() {
+      for (size_t index = 0; index < outputPinRows.size(); index++) {
+        lv_obj_t* row = outputPinRows[index];
+        lv_obj_t* label = lv_obj_get_child(row, 0);
+        bool selected = index == selectedPinOption;
+        lv_obj_set_style_bg_color(row, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(row, selected ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, selected ? lv_color_black() : lv_color_white(), LV_PART_MAIN);
+      }
+      if (!outputPinRows.empty()) {
+        lv_obj_scroll_to_view(outputPinRows[selectedPinOption], LV_ANIM_ON);
+      }
+      lv_label_set_text(pinFooter, ";/. Move   Enter Set   G Back");
+    }
+
+    void createOutputPinScreen() {
+      pinScreen = lv_obj_create(nullptr);
+      lv_obj_remove_flag(pinScreen, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_style_pad_all(pinScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_border_width(pinScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(pinScreen, 0, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(pinScreen, lv_color_black(), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(pinScreen, LV_OPA_COVER, LV_PART_MAIN);
+
+      lv_obj_t* title = lv_label_create(pinScreen);
+      lv_label_set_text(title, "LED OUTPUT PIN");
+      lv_obj_set_pos(title, 6, 2);
+      lv_obj_set_style_text_color(title, lv_color_hex(0xffffd82a), LV_PART_MAIN);
+      lv_obj_set_style_text_font(title, &ui_font_bsb_18, LV_PART_MAIN);
+
+      lv_obj_t* divider = lv_obj_create(pinScreen);
+      lv_obj_set_pos(divider, 6, 23);
+      lv_obj_set_size(divider, 228, 2);
+      lv_obj_set_style_bg_color(divider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(divider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(divider, 0, LV_PART_MAIN);
+
+      pinList = lv_obj_create(pinScreen);
+      lv_obj_set_pos(pinList, 6, 28);
+      lv_obj_set_size(pinList, 228, 84);
+      lv_obj_set_style_bg_opa(pinList, LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_border_width(pinList, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(pinList, 0, LV_PART_MAIN);
+      lv_obj_set_style_pad_all(pinList, 0, LV_PART_MAIN);
+      lv_obj_set_scroll_dir(pinList, LV_DIR_VER);
+      lv_obj_set_scrollbar_mode(pinList, LV_SCROLLBAR_MODE_OFF);
+
+      uint8_t currentPin = getCurrentOutputPin();
+      addOutputPinOption(21, "Internal RGB LED (GPIO 21)", currentPin, true);
+      addOutputPinOption(1, "Port A G1 (GPIO 1)", currentPin, true);
+      addOutputPinOption(2, "Port A G2 (GPIO 2)", currentPin);
+
+      for (uint8_t gpio = 0; gpio < WLED_NUM_PINS; gpio++) {
+        if (gpio == 1 || gpio == 2 || gpio == 21 || isCardputerPeripheralPin(gpio)) continue;
+        char label[20];
+        snprintf(label, sizeof(label), "GPIO %u", gpio);
+        addOutputPinOption(gpio, label, currentPin);
+      }
+
+      for (size_t index = 0; index < outputPinOptions.size(); index++) {
+        lv_obj_t* row = lv_obj_create(pinList);
+        lv_obj_set_pos(row, 0, index * 17);
+        lv_obj_set_size(row, 228, 16);
+        lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(row, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(row, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
+
+        lv_obj_t* label = lv_label_create(row);
+        lv_label_set_text(label, outputPinOptions[index].label.c_str());
+        lv_obj_set_width(label, 228);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_font(label, &ui_font_br_15, LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN);
+        outputPinRows.push_back(row);
+      }
+
+      lv_obj_t* bottomDivider = lv_obj_create(pinScreen);
+      lv_obj_set_pos(bottomDivider, 6, 117);
+      lv_obj_set_size(bottomDivider, 228, 1);
+      lv_obj_set_style_bg_color(bottomDivider, lv_color_hex(0xffde20e4), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(bottomDivider, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(bottomDivider, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
+
+      pinFooter = lv_label_create(pinScreen);
+      lv_obj_align(pinFooter, LV_ALIGN_BOTTOM_MID, 0, -2);
+      lv_obj_set_style_text_color(pinFooter, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_text_font(pinFooter, &ui_font_br_13, LV_PART_MAIN);
+      updateOutputPinSelection();
+    }
+
+    void openOutputPinMenu() {
+      if (outputPinOptions.empty()) return;
+      pinReturnToHelp = helpVisible;
+      helpVisible = false;
+      pinConfigMode = true;
+      selectedPinOption = 0;
+      uint8_t currentPin = getCurrentOutputPin();
+      for (size_t index = 0; index < outputPinOptions.size(); index++) {
+        if (outputPinOptions[index].gpio == currentPin) {
+          selectedPinOption = index;
+          break;
+        }
+      }
+      updateOutputPinSelection();
+      lv_scr_load_anim(pinScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    }
+
+    void closeOutputPinMenu() {
+      pinConfigMode = false;
+      if (pinReturnToHelp) {
+        helpVisible = true;
+        lv_scr_load_anim(helpScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+      } else {
+        loadScreen(SCREEN_ID_MAIN);
+      }
+    }
+
+    bool queueOutputPinChange(uint8_t gpio) {
+      Bus* firstBus = BusManager::getBus(0);
+      if (!firstBus || !firstBus->isDigital() || firstBus->is2Pin()) return false;
+      uint8_t currentPins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+      if (firstBus->getPins(currentPins) == 0) return false;
+      if (gpio == currentPins[0]) return true;
+      if (!PinManager::isPinOk(gpio, true) || PinManager::isPinAllocated(gpio)) return false;
+
+      busConfigs.clear();
+      for (size_t index = 0; index < BusManager::getNumBusses(); index++) {
+        Bus* bus = BusManager::getBus(index);
+        if (!bus) continue;
+        uint8_t pins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        bus->getPins(pins);
+        if (index == 0) pins[0] = gpio;
+        uint8_t type = bus->getType() | (bus->isOffRefreshRequired() ? 0x80 : 0);
+        busConfigs.emplace_back(type, pins, bus->getStart(), bus->getLength(), bus->getColorOrder(),
+                                bus->isReversed(), bus->skippedLeds(), bus->getAutoWhiteMode(),
+                                bus->getFrequency(), bus->getLEDCurrent(), bus->getMaxCurrent(),
+                                bus->getCustomText());
+      }
+      if (busConfigs.empty()) return false;
+      doInitBusses = true;
+      return true;
+    }
+
+    void applySelectedOutputPin() {
+      if (selectedPinOption >= outputPinOptions.size()) return;
+      if (!queueOutputPinChange(outputPinOptions[selectedPinOption].gpio)) {
+        lv_label_set_text(pinFooter, "Pin unavailable   G Back");
+        return;
+      }
+      closeOutputPinMenu();
     }
 
     void getEffectName(uint8_t effect, char* buffer, size_t bufferSize) {
@@ -231,6 +422,19 @@ class CardputerDisplayUsermod : public Usermod {
         for (auto key : status.word) {
           uint8_t newFx;
 
+          if (pinConfigMode) {
+            if (key == ';') {
+              selectedPinOption = (selectedPinOption + 1) % outputPinOptions.size();
+              updateOutputPinSelection();
+            } else if (key == '.') {
+              selectedPinOption = (selectedPinOption + outputPinOptions.size() - 1) % outputPinOptions.size();
+              updateOutputPinSelection();
+            } else if (key == 'g' || key == 'G' || key == 'h' || key == 'H') {
+              closeOutputPinMenu();
+            }
+            continue;
+          }
+
           if (shortcutMode) {
             if (key == 'c' || key == 'C') {
               shortcutMode = false;
@@ -267,6 +471,11 @@ class CardputerDisplayUsermod : public Usermod {
             case 'c':
             case 'C':
               openShortcutConfig();
+              break;
+
+            case 'g':
+            case 'G':
+              openOutputPinMenu();
               break;
 
             case '1':
@@ -323,6 +532,8 @@ class CardputerDisplayUsermod : public Usermod {
               break;
           }
         }
+
+        if (pinConfigMode && status.enter) applySelectedOutputPin();
       }
     }
 
@@ -345,6 +556,7 @@ class CardputerDisplayUsermod : public Usermod {
       createBatteryIndicator();
       createHelpScreen();
       createShortcutScreen();
+      createOutputPinScreen();
 
       shortcutPreferencesReady = shortcutPreferences.begin("cardkeys", false);
       if (shortcutPreferencesReady) {
