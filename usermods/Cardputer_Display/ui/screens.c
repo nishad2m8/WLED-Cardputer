@@ -272,6 +272,7 @@ void create_screen_main() {
                 lv_obj_t *parent_obj = obj;
                 {
                     lv_obj_t *obj = lv_label_create(parent_obj);
+                    objects.label_wifi_title = obj;
                     lv_obj_set_pos(obj, 132, 18);
                     lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
                     lv_obj_set_style_text_font(obj, &ui_font_bsb_15, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -316,6 +317,7 @@ void create_screen_main() {
                 lv_obj_t *parent_obj = obj;
                 {
                     lv_obj_t *obj = lv_label_create(parent_obj);
+                    objects.label_ip_title = obj;
                     lv_obj_set_pos(obj, 132, 18);
                     lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
                     lv_obj_set_style_text_font(obj, &ui_font_bsb_15, LV_PART_MAIN | LV_STATE_DEFAULT);

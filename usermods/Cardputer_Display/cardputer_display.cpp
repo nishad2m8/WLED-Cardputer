@@ -125,6 +125,8 @@ class CardputerDisplayUsermod : public Usermod {
       addSection("LED CONTROL");
       addRow("BTN G0", "Toggle LEDs");
       addRow("f", "Toggle LEDs");
+      addSection("NETWORK");
+      addRow("w", "Toggle WiFi");
       addSection("EFFECTS");
       addRow("c", "LED and effect setup");
       addRow("1-5", "Activate assigned effect");
@@ -132,7 +134,7 @@ class CardputerDisplayUsermod : public Usermod {
       addSection("BRIGHTNESS");
       addRow(", /", "Decrease / increase");
       addSection("HELP");
-      addRow("; / .", "Scroll down / up");
+      addRow("; / .", "Scroll up / down");
 
       lv_obj_t* bottomDivider = lv_obj_create(helpScreen);
       lv_obj_set_pos(bottomDivider, 6, 117);
@@ -143,7 +145,7 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
 
       lv_obj_t* footer = lv_label_create(helpScreen);
-      lv_label_set_text(footer, "; Down   . Up   H Close");
+      lv_label_set_text(footer, "; Up   . Down   H Close");
       lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
       lv_obj_set_style_text_color(footer, lv_color_white(), LV_PART_MAIN);
       lv_obj_set_style_text_font(footer, &ui_font_br_13, LV_PART_MAIN);
@@ -193,7 +195,7 @@ class CardputerDisplayUsermod : public Usermod {
       if (!outputPinRows.empty()) {
         lv_obj_scroll_to_view(outputPinRows[selectedPinOption], LV_ANIM_ON);
       }
-        lv_label_set_text(pinFooter, "; Down  . Up  Enter Set  C Back");
+        lv_label_set_text(pinFooter, "; Up  . Down  Enter Set  C Back");
     }
 
     void createOutputPinScreen() {
@@ -381,7 +383,7 @@ class CardputerDisplayUsermod : public Usermod {
       } else if (configEditMode) {
         lv_label_set_text(configMenuFooter, ", / Change   Enter Save   C Cancel");
       } else {
-          lv_label_set_text(configMenuFooter, "; Down  . Up  Enter Select  C Back");
+          lv_label_set_text(configMenuFooter, "; Up  . Down  Enter Select  C Back");
       }
     }
 
@@ -688,15 +690,50 @@ class CardputerDisplayUsermod : public Usermod {
       stateChanged = true;
     }
 
+    void toggleWifi() {
+      if (cardputerWifiDisabled) {
+        cardputerWifiDisabled = false;
+        apActive = false;
+        interfacesInited = false;
+        WLED::instance().initConnection();
+      } else {
+        cardputerWifiDisabled = true;
+        forceReconnect = false;
+        dnsServer.stop();
+        apActive = false;
+        interfacesInited = false;
+        lastReconnectAttempt = millis();
+        WiFi.mode(WIFI_OFF);
+      }
+    }
+
     // Keyboard handling
     void handleKeyboard() {
       M5Cardputer.update();
 
       if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
         Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
+        bool helpInputMode = helpVisible;
 
         for (auto key : status.word) {
           uint8_t newFx;
+
+          if (helpInputMode) {
+            if (key == 'h' || key == 'H') {
+              helpVisible = false;
+              loadScreen(SCREEN_ID_MAIN);
+            } else if (key == ';') {
+              lv_obj_scroll_by_bounded(helpContent, 0, 24, LV_ANIM_ON);
+            } else if (key == '.') {
+              lv_obj_scroll_by_bounded(helpContent, 0, -24, LV_ANIM_ON);
+            }
+            continue;
+          }
+
+          if (key == 'w' || key == 'W') {
+            toggleWifi();
+            continue;
+          }
 
           if (pinConfigMode) {
             if (key == ';') {
@@ -768,12 +805,9 @@ class CardputerDisplayUsermod : public Usermod {
           switch (key) {
             case 'h':
             case 'H':
-              helpVisible = !helpVisible;
-              if (helpVisible) {
-                lv_scr_load_anim(helpScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
-              } else {
-                loadScreen(SCREEN_ID_MAIN);
-              }
+              helpVisible = true;
+              helpInputMode = true;
+              lv_scr_load_anim(helpScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
               break;
 
             case 'f':
@@ -796,30 +830,22 @@ class CardputerDisplayUsermod : public Usermod {
               break;
 
             case ';':  // Scroll help up or select the next effect
-              if (helpVisible) {
-                lv_obj_scroll_by_bounded(helpContent, 0, -24, LV_ANIM_ON);
-              } else {
-                newFx = (strip.getSegment(strip.getMainSegmentId()).mode + 1) % strip.getModeCount();
-                strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
-                setValuesFromMainSeg();
-                stateChanged = true;
-              }
+              newFx = (strip.getSegment(strip.getMainSegmentId()).mode + 1) % strip.getModeCount();
+              strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
+              setValuesFromMainSeg();
+              stateChanged = true;
               break;
 
             case '.':  // Scroll help down or select the previous effect
-              if (helpVisible) {
-                lv_obj_scroll_by_bounded(helpContent, 0, 24, LV_ANIM_ON);
+              newFx = strip.getSegment(strip.getMainSegmentId()).mode;
+              if (newFx == 0) {
+                newFx = strip.getModeCount() - 1;
               } else {
-                newFx = strip.getSegment(strip.getMainSegmentId()).mode;
-                if (newFx == 0) {
-                  newFx = strip.getModeCount() - 1;
-                } else {
-                  newFx--;
-                }
-                strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
-                setValuesFromMainSeg();
-                stateChanged = true;
+                newFx--;
               }
+              strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
+              setValuesFromMainSeg();
+              stateChanged = true;
               break;
 
             case ',':  // Brightness down (left)
@@ -912,22 +938,30 @@ class CardputerDisplayUsermod : public Usermod {
     }
 
     void updateDisplay() {
-      // Update WiFi SSID
-      if (WLED_CONNECTED) {
-        lv_label_set_text(objects.label_ssid, WiFi.SSID().c_str());
-      } else if (apActive) {
-        lv_label_set_text(objects.label_ssid, "AP: WLED-AP");
+      const bool wifiEnabled = !cardputerWifiDisabled && WiFi.getMode() != WIFI_OFF;
+      lv_color_t wifiTitleColor = wifiEnabled ? lv_color_white() : lv_color_hex(0xff808080);
+      lv_obj_set_style_text_color(objects.label_wifi_title, wifiTitleColor, LV_PART_MAIN);
+      lv_obj_set_style_text_color(objects.label_ip_title, wifiTitleColor, LV_PART_MAIN);
+      if (wifiEnabled) {
+        lv_obj_clear_flag(objects.label_ssid, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(objects.label_ip, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_text_color(objects.label_ssid, lv_color_hex(0xff3eadff), LV_PART_MAIN);
+        if (WLED_CONNECTED) {
+          lv_label_set_text(objects.label_ssid, WiFi.SSID().c_str());
+          lv_label_set_text(objects.label_ip, WiFi.localIP().toString().c_str());
+        } else if (apActive) {
+          lv_label_set_text(objects.label_ssid, "AP: WLED-AP");
+          lv_label_set_text(objects.label_ip, "4.3.2.1");
+        } else {
+          lv_label_set_text(objects.label_ssid, "Disconnected");
+          lv_label_set_text(objects.label_ip, "---");
+        }
       } else {
-        lv_label_set_text(objects.label_ssid, "Disconnected");
-      }
-
-      // Update IP Address
-      if (WLED_CONNECTED) {
-        lv_label_set_text(objects.label_ip, WiFi.localIP().toString().c_str());
-      } else if (apActive) {
-        lv_label_set_text(objects.label_ip, "4.3.2.1");
-      } else {
-        lv_label_set_text(objects.label_ip, "---");
+        lv_label_set_text(objects.label_ssid, "OFF");
+        lv_label_set_text(objects.label_ip, "");
+        lv_obj_clear_flag(objects.label_ssid, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(objects.label_ip, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_text_color(objects.label_ssid, lv_color_hex(0xff808080), LV_PART_MAIN);
       }
 
       // Update LED Pin
