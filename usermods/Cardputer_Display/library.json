@@ -5,6 +5,6 @@
     "srcFilter": ["+<*.cpp>", "+<ui/*.c>"]
   },
   "dependencies": {
-    "m5stack/M5GFX": "^0.2.0"
+    "m5stack/M5GFX": "^0.3.0"
   }
 }

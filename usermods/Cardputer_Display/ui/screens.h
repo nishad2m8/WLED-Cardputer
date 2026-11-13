@@ -23,7 +23,9 @@ typedef struct _objects_t {
     lv_obj_t *label_brightness;
     lv_obj_t *label_fx;
     lv_obj_t *image_logo;
+    lv_obj_t *label_wifi_title;
     lv_obj_t *label_ssid;
+    lv_obj_t *label_ip_title;
     lv_obj_t *label_ip;
     lv_obj_t *label_date;
     lv_obj_t *label_time;
