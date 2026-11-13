@@ -77,8 +77,8 @@ class CardputerDisplayUsermod : public Usermod {
     lv_obj_t* effectAssignmentLabels[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* configMenuScreen = nullptr;
     lv_obj_t* configMenuList = nullptr;
-    lv_obj_t* configOptionRows[11] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* configOptionLabels[11] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* configOptionRows[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* configOptionLabels[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* configMenuFooter = nullptr;
     lv_obj_t* pinScreen = nullptr;
     lv_obj_t* pinList = nullptr;
@@ -90,7 +90,7 @@ class CardputerDisplayUsermod : public Usermod {
     unsigned long lastRefresh = 0;
     unsigned long lastTickTime = 0;
     static const unsigned long REFRESH_RATE_MS = 500;
-    static constexpr uint8_t CONFIG_OPTION_COUNT = 11;
+    static constexpr uint8_t CONFIG_OPTION_COUNT = 12;
 
     void createHelpScreen() {
       helpScreen = lv_obj_create(nullptr);
@@ -477,6 +477,7 @@ class CardputerDisplayUsermod : public Usermod {
       }
       snprintf(optionText, sizeof(optionText), "RGBW mode: %s", Bus::hasWhite(type) ? CARDPUTER_WHITE_MODES[whiteMode < 5 ? whiteMode : 0] : "N/A");
       lv_label_set_text(configOptionLabels[10], optionText);
+      lv_label_set_text(configOptionLabels[11], cardputerWifiDisabled ? "WiFi: Off" : "WiFi: On");
 
       for (uint8_t index = 0; index < CONFIG_OPTION_COUNT; index++) {
         bool selected = index == selectedConfigOption;
@@ -864,6 +865,10 @@ class CardputerDisplayUsermod : public Usermod {
         case 2:
           openOutputPinMenu();
           break;
+        case 11:
+          toggleWifi();
+          updateConfigMenu();
+          break;
         default:
           startConfigEdit();
           break;
@@ -911,6 +916,7 @@ class CardputerDisplayUsermod : public Usermod {
         lastReconnectAttempt = millis();
         WiFi.mode(WIFI_OFF);
       }
+      configNeedsWrite = true;
     }
 
     // Keyboard handling
@@ -1103,6 +1109,7 @@ class CardputerDisplayUsermod : public Usermod {
   public:
     bool readFromConfig(JsonObject& root) override {
       JsonObject cardputerSettings = root["cardputerDisplay"];
+      cardputerWifiDisabled = cardputerSettings["wifiDisabled"] | false;
       JsonArray savedEffects = cardputerSettings["effectKeys"];
       if (savedEffects.isNull() || savedEffects.size() != 5) return false;
 
@@ -1122,6 +1129,7 @@ class CardputerDisplayUsermod : public Usermod {
 
     void addToConfig(JsonObject& root) override {
       JsonObject cardputerSettings = root.createNestedObject("cardputerDisplay");
+      cardputerSettings["wifiDisabled"] = cardputerWifiDisabled;
       JsonArray savedEffects = cardputerSettings.createNestedArray("effectKeys");
       for (uint8_t index = 0; index < 5; index++) {
         savedEffects.add(effectShortcuts[index]);
