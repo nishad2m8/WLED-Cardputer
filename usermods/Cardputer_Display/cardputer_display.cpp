@@ -28,10 +28,11 @@ class CardputerDisplayUsermod : public Usermod {
     bool initDone = false;
     bool helpVisible = false;
     bool shortcutMode = false;
+    bool deleteShortcutMode = false;
     bool pinConfigMode = false;
     bool configMenuMode = false;
     bool configEditMode = false;
-    bool shortcutPreferencesReady = false;
+    bool effectShortcutsLoadedFromConfig = false;
     uint8_t effectShortcuts[5] = {
       UNASSIGNED_EFFECT, UNASSIGNED_EFFECT, UNASSIGNED_EFFECT,
       UNASSIGNED_EFFECT, UNASSIGNED_EFFECT
@@ -43,7 +44,6 @@ class CardputerDisplayUsermod : public Usermod {
     char ledCountInput[6] = {0};
     uint8_t ledCountInputLength = 0;
     bool configInputError = false;
-    Preferences shortcutPreferences;
     lv_obj_t* helpScreen = nullptr;
     lv_obj_t* helpContent = nullptr;
     lv_obj_t* shortcutScreen = nullptr;
@@ -131,6 +131,7 @@ class CardputerDisplayUsermod : public Usermod {
       addSection("EFFECTS");
       addRow("c", "LED and effect setup");
       addRow("1-5", "Activate assigned effect");
+      addRow("0 + 1-5", "Delete selected key slot");
       addRow("; / .", "Next / previous effect");
       addSection("LED BRIGHTNESS");
       addRow(", /", "Decrease / increase LEDs");
@@ -454,13 +455,17 @@ class CardputerDisplayUsermod : public Usermod {
     void updateShortcutScreen() {
       char selectedName[32];
       char selectedText[48];
-      getEffectName(selectedEffect, selectedName, sizeof(selectedName));
-      snprintf(selectedText, sizeof(selectedText), "Selected: %s", selectedName);
+      if (deleteShortcutMode) {
+        snprintf(selectedText, sizeof(selectedText), "Delete slot: press 1-5");
+      } else {
+        getEffectName(selectedEffect, selectedName, sizeof(selectedName));
+        snprintf(selectedText, sizeof(selectedText), "Selected: %s", selectedName);
+      }
       lv_label_set_text(selectedEffectLabel, selectedText);
 
       for (uint8_t index = 0; index < 5; index++) {
         char shortcutName[32];
-        if (effectShortcuts[index] == UNASSIGNED_EFFECT) {
+        if (effectShortcuts[index] == UNASSIGNED_EFFECT || effectShortcuts[index] >= strip.getModeCount()) {
           strcpy(shortcutName, "--");
         } else {
           getEffectName(effectShortcuts[index], shortcutName, sizeof(shortcutName));
@@ -541,7 +546,7 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_style_radius(bottomDivider, 0, LV_PART_MAIN);
 
       lv_obj_t* footer = lv_label_create(shortcutScreen);
-      lv_label_set_text(footer, "1-5 Assign   C Menu");
+      lv_label_set_text(footer, "1-5 Assign  0+1-5 Clear  C Menu");
       lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
       lv_obj_set_style_text_color(footer, lv_color_white(), LV_PART_MAIN);
       lv_obj_set_style_text_font(footer, &ui_font_br_13, LV_PART_MAIN);
@@ -672,12 +677,19 @@ class CardputerDisplayUsermod : public Usermod {
     }
 
     void assignEffectShortcut(uint8_t index) {
+      if (index >= 5 || selectedEffect >= strip.getModeCount()) return;
       effectShortcuts[index] = selectedEffect;
-      if (shortcutPreferencesReady) {
-        char keyName[5];
-        snprintf(keyName, sizeof(keyName), "key%u", index + 1);
-        shortcutPreferences.putUChar(keyName, selectedEffect);
+      configNeedsWrite = true;
+      updateShortcutScreen();
+    }
+
+    void clearEffectShortcut(uint8_t index) {
+      if (index >= 5) return;
+      if (effectShortcuts[index] != UNASSIGNED_EFFECT) {
+        effectShortcuts[index] = UNASSIGNED_EFFECT;
+        configNeedsWrite = true;
       }
+      deleteShortcutMode = false;
       updateShortcutScreen();
     }
 
@@ -750,13 +762,23 @@ class CardputerDisplayUsermod : public Usermod {
           }
 
           if (shortcutMode) {
-            if (key == 'c' || key == 'C') {
+            if (deleteShortcutMode) {
+              if (key == 'c' || key == 'C') {
+                deleteShortcutMode = false;
+                updateShortcutScreen();
+              } else if (key >= '1' && key <= '5') {
+                clearEffectShortcut(key - '1');
+              }
+            } else if (key == 'c' || key == 'C') {
               closeShortcutConfig();
             } else if (key == '.') {
               selectedEffect = (selectedEffect + strip.getModeCount() - 1) % strip.getModeCount();
               updateShortcutScreen();
             } else if (key == ';') {
               selectedEffect = (selectedEffect + 1) % strip.getModeCount();
+              updateShortcutScreen();
+            } else if (key == '0') {
+              deleteShortcutMode = true;
               updateShortcutScreen();
             } else if (key >= '1' && key <= '5') {
               assignEffectShortcut(key - '1');
@@ -885,6 +907,33 @@ class CardputerDisplayUsermod : public Usermod {
     }
 
   public:
+    bool readFromConfig(JsonObject& root) override {
+      JsonObject cardputerSettings = root["cardputerDisplay"];
+      JsonArray savedEffects = cardputerSettings["effectKeys"];
+      if (savedEffects.isNull() || savedEffects.size() != 5) return false;
+
+      bool valid = true;
+      for (uint8_t index = 0; index < 5; index++) {
+        uint16_t savedEffect = savedEffects[index] | UNASSIGNED_EFFECT;
+        if (savedEffect > 0xFF) {
+          effectShortcuts[index] = UNASSIGNED_EFFECT;
+          valid = false;
+        } else {
+          effectShortcuts[index] = (uint8_t)savedEffect;
+        }
+      }
+      effectShortcutsLoadedFromConfig = valid;
+      return valid;
+    }
+
+    void addToConfig(JsonObject& root) override {
+      JsonObject cardputerSettings = root.createNestedObject("cardputerDisplay");
+      JsonArray savedEffects = cardputerSettings.createNestedArray("effectKeys");
+      for (uint8_t index = 0; index < 5; index++) {
+        savedEffects.add(effectShortcuts[index]);
+      }
+    }
+
     void setup() override {
       // Initialize M5Cardputer with display and keyboard
       auto cfg = M5.config();
@@ -906,16 +955,20 @@ class CardputerDisplayUsermod : public Usermod {
       createOutputPinScreen();
       createConfigMenuScreen();
 
-      shortcutPreferencesReady = shortcutPreferences.begin("cardkeys", false);
-      if (shortcutPreferencesReady) {
-        for (uint8_t index = 0; index < 5; index++) {
-          char keyName[5];
-          snprintf(keyName, sizeof(keyName), "key%u", index + 1);
-          effectShortcuts[index] = shortcutPreferences.getUChar(keyName, UNASSIGNED_EFFECT);
+      if (!effectShortcutsLoadedFromConfig) {
+        Preferences legacyPreferences;
+        if (legacyPreferences.begin("cardkeys", true)) {
+          for (uint8_t index = 0; index < 5; index++) {
+            char keyName[5];
+            snprintf(keyName, sizeof(keyName), "key%u", index + 1);
+            effectShortcuts[index] = legacyPreferences.getUChar(keyName, UNASSIGNED_EFFECT);
+          }
+          legacyPreferences.end();
         }
-        updateShortcutScreen();
-        updateConfigMenu();
+        configNeedsWrite = true;
       }
+      updateShortcutScreen();
+      updateConfigMenu();
       // Create FreeRTOS task for LVGL tick
       xTaskCreatePinnedToCore(lv_tick_task, "lv_tick_task", 4096, NULL, 5, NULL, 1);
 
