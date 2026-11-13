@@ -26,9 +26,10 @@ Built on top of [WLED](https://kno.wled.ge) by [Aircoookie](https://github.com/A
 ## Features
 
 - Full WLED functionality (100+ effects, 50+ palettes, segments, presets, OTA updates)
-- LVGL-based display showing WiFi status, IP, brightness, current effect, time, and system info
+- LVGL-based display showing WiFi status, IP, strip brightness, current effect, time, battery level, and system info
 - Keyboard controls for hands-on operation without needing the web UI
-- Default LED output on GPIO 21
+- Default LED output on GPIO 21, configurable from the C menu
+- Five persistent effect shortcuts that can be assigned and cleared individually
 
 ## Controls
 
@@ -42,18 +43,21 @@ Built on top of [WLED](https://kno.wled.ge) by [Aircoookie](https://github.com/A
 
 | Key | Action |
 |-----|--------|
-| `,` | Brightness down |
-| `/` | Brightness up |
+| `,` | Decrease LED strip brightness |
+| `/` | Increase LED strip brightness |
 | `;` | Next effect |
 | `.` | Previous effect |
 | `f` | Fade LEDs on/off |
+| `w` | Toggle WiFi |
 | `h` | Show or hide keyboard help |
-| `c` | Configure effects for keys `1`–`5` |
+| `c` | Open the configuration menu |
 | `1`–`5` | Start the assigned effect |
+| `0`, then `1`–`5` | In effect-key setup, clear that shortcut slot |
 
-Brightness changes in steps of 25 (0–255 scale).
+LED strip brightness changes in steps of 25 (0–255 scale). The display backlight stays at a fixed brightness; there is no keyboard brightness control or inactivity screensaver.
 The `f` key uses WLED's configured transition time.
-Press `c`, browse effects with `.` and `;`, then press `1`–`5` to assign the selected effect. Assignments are saved across restarts.
+In the C menu, choose **Effect key shortcuts**, browse effects with `.` and `;`, then press `1`–`5` to assign the selected effect. To clear a specific slot, press `0` followed by its number; press `c` to cancel deletion. Shortcut assignments are stored in WLED's configuration and survive restarts.
+The C menu also lets you configure the LED output pin, LED count, and maximum current.
 
 ## Display Info
 
@@ -61,12 +65,14 @@ The Cardputer's built-in screen shows:
 
 - WiFi SSID and IP address
 - LED pin and count
-- Brightness (value and bar)
+- LED strip brightness (value and bar)
 - Battery charge estimate
 - Current effect name
 - Time and date
 - Estimated current draw
 - Free heap memory
+
+The display backlight is fixed at startup and does not dim automatically.
 
 ## Building
 
