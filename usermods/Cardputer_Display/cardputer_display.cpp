@@ -15,6 +15,7 @@ extern "C" {
 
 // Brightness step for keyboard control (0-255 scale)
 #define BRIGHTNESS_STEP 25
+static constexpr uint8_t INITIAL_DISPLAY_BRIGHTNESS = 128;
 
 class CardputerDisplayUsermod : public Usermod {
   private:
@@ -131,8 +132,8 @@ class CardputerDisplayUsermod : public Usermod {
       addRow("c", "LED and effect setup");
       addRow("1-5", "Activate assigned effect");
       addRow("; / .", "Next / previous effect");
-      addSection("BRIGHTNESS");
-      addRow(", /", "Decrease / increase");
+      addSection("LED BRIGHTNESS");
+      addRow(", /", "Decrease / increase LEDs");
       addSection("HELP");
       addRow("; / .", "Scroll up / down");
 
@@ -363,7 +364,6 @@ class CardputerDisplayUsermod : public Usermod {
         snprintf(optionText, sizeof(optionText), "Max current: %u mA", maxCurrent);
         lv_label_set_text(configOptionLabels[3], optionText);
       }
-
       for (uint8_t index = 0; index < 4; index++) {
         bool selected = index == selectedConfigOption;
         lv_obj_set_style_bg_color(configOptionRows[index],
@@ -412,8 +412,8 @@ class CardputerDisplayUsermod : public Usermod {
 
       for (uint8_t index = 0; index < 4; index++) {
         configOptionRows[index] = lv_obj_create(configMenuScreen);
-        lv_obj_set_pos(configOptionRows[index], 6, 31 + index * 20);
-        lv_obj_set_size(configOptionRows[index], 228, 18);
+        lv_obj_set_pos(configOptionRows[index], 6, 32 + index * 20);
+        lv_obj_set_size(configOptionRows[index], 228, 16);
         lv_obj_remove_flag(configOptionRows[index], LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_bg_opa(configOptionRows[index], LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(configOptionRows[index], 0, LV_PART_MAIN);
@@ -424,7 +424,7 @@ class CardputerDisplayUsermod : public Usermod {
         lv_obj_set_pos(configOptionLabels[index], 3, 0);
         lv_obj_set_width(configOptionLabels[index], 222);
         lv_label_set_long_mode(configOptionLabels[index], LV_LABEL_LONG_CLIP);
-        lv_obj_set_style_text_font(configOptionLabels[index], &ui_font_br_15, LV_PART_MAIN);
+        lv_obj_set_style_text_font(configOptionLabels[index], &ui_font_br_13, LV_PART_MAIN);
         lv_obj_set_style_text_color(configOptionLabels[index], lv_color_white(), LV_PART_MAIN);
       }
 
@@ -553,7 +553,7 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_width(objects.label_date, 85);
 
       lv_obj_set_pos(objects.label_current, 3, 51);
-      lv_obj_set_size(objects.label_current, 90, LV_SIZE_CONTENT);
+      lv_obj_set_size(objects.label_current, 58, LV_SIZE_CONTENT);
       lv_label_set_long_mode(objects.label_current, LV_LABEL_LONG_CLIP);
       lv_obj_set_style_text_font(objects.label_current, &lv_font_montserrat_12, LV_PART_MAIN);
       lv_obj_set_style_text_align(objects.label_current, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
@@ -581,8 +581,8 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_style_text_color(batteryLabel, lv_color_black(), LV_PART_MAIN);
       lv_label_set_text(batteryLabel, "--%");
 
-      lv_obj_set_pos(objects.label_freeheap, 96, 51);
-      lv_obj_set_size(objects.label_freeheap, 39, LV_SIZE_CONTENT);
+      lv_obj_set_pos(objects.label_freeheap, 64, 51);
+      lv_obj_set_size(objects.label_freeheap, 62, LV_SIZE_CONTENT);
       lv_obj_set_style_text_font(objects.label_freeheap, &lv_font_montserrat_12, LV_PART_MAIN);
       lv_obj_set_style_text_letter_space(objects.label_freeheap, 0, LV_PART_MAIN);
     }
@@ -687,7 +687,7 @@ class CardputerDisplayUsermod : public Usermod {
 
       strip.getSegment(strip.getMainSegmentId()).setMode(effect);
       setValuesFromMainSeg();
-      stateChanged = true;
+      stateUpdated(CALL_MODE_BUTTON);
     }
 
     void toggleWifi() {
@@ -710,8 +710,9 @@ class CardputerDisplayUsermod : public Usermod {
     // Keyboard handling
     void handleKeyboard() {
       M5Cardputer.update();
+      bool keyPressed = M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed();
 
-      if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+      if (keyPressed) {
         Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
         bool helpInputMode = helpVisible;
 
@@ -833,7 +834,7 @@ class CardputerDisplayUsermod : public Usermod {
               newFx = (strip.getSegment(strip.getMainSegmentId()).mode + 1) % strip.getModeCount();
               strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
               setValuesFromMainSeg();
-              stateChanged = true;
+              stateUpdated(CALL_MODE_BUTTON);
               break;
 
             case '.':  // Scroll help down or select the previous effect
@@ -845,7 +846,7 @@ class CardputerDisplayUsermod : public Usermod {
               }
               strip.getSegment(strip.getMainSegmentId()).setMode(newFx);
               setValuesFromMainSeg();
-              stateChanged = true;
+              stateUpdated(CALL_MODE_BUTTON);
               break;
 
             case ',':  // Brightness down (left)
@@ -865,6 +866,7 @@ class CardputerDisplayUsermod : public Usermod {
               }
               stateUpdated(CALL_MODE_BUTTON);
               break;
+
           }
         }
 
@@ -891,7 +893,7 @@ class CardputerDisplayUsermod : public Usermod {
       // Configure display
       M5Cardputer.Display.setRotation(0);  // M5GFX 0.3.x applies the Cardputer landscape offset
       M5Cardputer.Display.fillScreen(TFT_BLACK);
-      M5Cardputer.Display.setBrightness(128);
+      M5Cardputer.Display.setBrightness(INITIAL_DISPLAY_BRIGHTNESS);
 
       // Initialize LVGL with M5Cardputer's display
       lvgl_setup(&M5Cardputer.Display);
@@ -912,8 +914,8 @@ class CardputerDisplayUsermod : public Usermod {
           effectShortcuts[index] = shortcutPreferences.getUChar(keyName, UNASSIGNED_EFFECT);
         }
         updateShortcutScreen();
+        updateConfigMenu();
       }
-
       // Create FreeRTOS task for LVGL tick
       xTaskCreatePinnedToCore(lv_tick_task, "lv_tick_task", 4096, NULL, 5, NULL, 1);
 
@@ -925,7 +927,6 @@ class CardputerDisplayUsermod : public Usermod {
 
       // Handle keyboard input
       handleKeyboard();
-
       // Handle LVGL timer
       lv_timer_handler();
 
