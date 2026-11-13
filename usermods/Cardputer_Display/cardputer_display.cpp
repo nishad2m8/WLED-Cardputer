@@ -17,6 +17,31 @@ extern "C" {
 #define BRIGHTNESS_STEP 25
 static constexpr uint8_t INITIAL_DISPLAY_BRIGHTNESS = 128;
 
+struct CardputerStripTypeOption {
+  uint8_t type;
+  const char* label;
+};
+
+static const CardputerStripTypeOption CARDPUTER_STRIP_TYPES[] = {
+  {TYPE_WS2812_RGB, "WS281x RGB"},
+  {TYPE_SK6812_RGBW, "SK6812 RGBW"},
+  {TYPE_TM1814, "TM1814 RGBW"},
+  {TYPE_WS2811_400KHZ, "WS2811 400kHz"},
+  {TYPE_TM1829, "TM1829"},
+  {TYPE_UCS8903, "UCS8903"},
+  {TYPE_APA106, "APA106/PL9823"},
+  {TYPE_TM1914, "TM1914"},
+  {TYPE_FW1906, "FW1906 RGB+CW"},
+  {TYPE_UCS8904, "UCS8904 RGBW"},
+  {TYPE_WS2805, "WS2805 RGB+CCT"},
+  {TYPE_SM16825, "SM16825 RGB+CCT"},
+  {TYPE_WS2812_1CH_X3, "WS2811 White"},
+  {TYPE_WS2812_WWA, "WS281x WWA"}
+};
+
+static const char* const CARDPUTER_COLOR_ORDERS[] = {"GRB", "RGB", "BRG", "RBG", "GBR", "BGR"};
+static const char* const CARDPUTER_WHITE_MODES[] = {"Manual", "Auto brighter", "Auto accurate", "Dual", "White only"};
+
 class CardputerDisplayUsermod : public Usermod {
   private:
     struct OutputPinOption {
@@ -32,6 +57,7 @@ class CardputerDisplayUsermod : public Usermod {
     bool pinConfigMode = false;
     bool configMenuMode = false;
     bool configEditMode = false;
+    bool configInputActive = false;
     bool effectShortcutsLoadedFromConfig = false;
     uint8_t effectShortcuts[5] = {
       UNASSIGNED_EFFECT, UNASSIGNED_EFFECT, UNASSIGNED_EFFECT,
@@ -41,8 +67,8 @@ class CardputerDisplayUsermod : public Usermod {
     uint8_t selectedConfigOption = 0;
     size_t selectedPinOption = 0;
     uint16_t configEditValue = 0;
-    char ledCountInput[6] = {0};
-    uint8_t ledCountInputLength = 0;
+    char configInput[6] = {0};
+    uint8_t configInputLength = 0;
     bool configInputError = false;
     lv_obj_t* helpScreen = nullptr;
     lv_obj_t* helpContent = nullptr;
@@ -50,8 +76,9 @@ class CardputerDisplayUsermod : public Usermod {
     lv_obj_t* selectedEffectLabel = nullptr;
     lv_obj_t* effectAssignmentLabels[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* configMenuScreen = nullptr;
-    lv_obj_t* configOptionRows[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* configOptionLabels[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* configMenuList = nullptr;
+    lv_obj_t* configOptionRows[11] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* configOptionLabels[11] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* configMenuFooter = nullptr;
     lv_obj_t* pinScreen = nullptr;
     lv_obj_t* pinList = nullptr;
@@ -63,6 +90,7 @@ class CardputerDisplayUsermod : public Usermod {
     unsigned long lastRefresh = 0;
     unsigned long lastTickTime = 0;
     static const unsigned long REFRESH_RATE_MS = 500;
+    static constexpr uint8_t CONFIG_OPTION_COUNT = 11;
 
     void createHelpScreen() {
       helpScreen = lv_obj_create(nullptr);
@@ -304,18 +332,28 @@ class CardputerDisplayUsermod : public Usermod {
       lv_scr_load_anim(configMenuScreen, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
     }
 
-    bool queueOutputBusChange(uint8_t gpio, uint16_t ledCount) {
+    uint8_t getCurrentStripTypeIndex() {
+      Bus* bus = BusManager::getBus(0);
+      uint8_t type = bus ? bus->getType() : TYPE_WS2812_RGB;
+      for (uint8_t index = 0; index < sizeof(CARDPUTER_STRIP_TYPES) / sizeof(CARDPUTER_STRIP_TYPES[0]); index++) {
+        if (CARDPUTER_STRIP_TYPES[index].type == type) return index;
+      }
+      return 0;
+    }
+
+    bool queueOutputBusConfig(uint8_t type, uint8_t gpio, uint16_t ledCount, uint8_t colorOrder,
+                              bool reversed, uint8_t skip, uint8_t whiteMode, uint16_t ledCurrent,
+                              uint16_t busMaxCurrent) {
       Bus* firstBus = BusManager::getBus(0);
-      if (!firstBus || !firstBus->isDigital() || firstBus->is2Pin()) return false;
+      if (!firstBus || !Bus::isDigital(type) || Bus::is2Pin(type)) return false;
       uint8_t currentPins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
       if (firstBus->getPins(currentPins) == 0) return false;
       uint16_t start = firstBus->getStart();
       if (start >= MAX_LEDS) return false;
       uint16_t maxLedCount = getMaxOutputLength();
-      if (ledCount == 0 || ledCount > maxLedCount) return false;
+      if (ledCount == 0 || ledCount > maxLedCount || (skip > 0 && skip >= ledCount)) return false;
       bool pinChanged = gpio != currentPins[0];
       if (pinChanged && (!PinManager::isPinOk(gpio, true) || PinManager::isPinAllocated(gpio))) return false;
-      if (!pinChanged && ledCount == firstBus->getLength()) return true;
 
       busConfigs.clear();
       for (size_t index = 0; index < BusManager::getNumBusses(); index++) {
@@ -324,16 +362,43 @@ class CardputerDisplayUsermod : public Usermod {
         uint8_t pins[OUTPUT_MAX_PINS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
         bus->getPins(pins);
         if (index == 0) pins[0] = gpio;
-        uint16_t length = index == 0 ? ledCount : bus->getLength();
-        uint8_t type = bus->getType() | (bus->isOffRefreshRequired() ? 0x80 : 0);
-        busConfigs.emplace_back(type, pins, bus->getStart(), length, bus->getColorOrder(),
-                                bus->isReversed(), bus->skippedLeds(), bus->getAutoWhiteMode(),
-                                bus->getFrequency(), bus->getLEDCurrent(), bus->getMaxCurrent(),
+        uint8_t busType = bus->getType();
+        uint16_t length = bus->getLength();
+        uint8_t busColorOrder = bus->getColorOrder();
+        bool busReversed = bus->isReversed();
+        uint8_t busSkip = bus->skippedLeds();
+        uint8_t busWhiteMode = bus->getAutoWhiteMode();
+        uint16_t busLedCurrent = bus->getLEDCurrent();
+        uint16_t currentBusMax = bus->getMaxCurrent();
+        bool refresh = bus->isOffRefreshRequired();
+        if (index == 0) {
+          busType = type;
+          pins[0] = gpio;
+          length = ledCount;
+          busColorOrder = (busColorOrder & 0xF0) | colorOrder;
+          busReversed = reversed;
+          busSkip = skip;
+          busWhiteMode = Bus::hasWhite(type) ? whiteMode : RGBW_MODE_MANUAL_ONLY;
+          busLedCurrent = ledCurrent;
+          currentBusMax = busMaxCurrent;
+          refresh = Bus::mustRefresh(type);
+        }
+        busConfigs.emplace_back(busType | (refresh ? 0x80 : 0), pins, bus->getStart(), length,
+                                busColorOrder, busReversed, busSkip, busWhiteMode,
+                                bus->getFrequency(), busLedCurrent, currentBusMax,
                                 bus->getCustomText());
       }
       if (busConfigs.empty()) return false;
       doInitBusses = true;
       return true;
+    }
+
+    bool queueOutputBusChange(uint8_t gpio, uint16_t ledCount) {
+      Bus* bus = BusManager::getBus(0);
+      if (!bus) return false;
+      return queueOutputBusConfig(bus->getType(), gpio, ledCount, bus->getColorOrder() & 0x0F,
+                                  bus->isReversed(), bus->skippedLeds(), bus->getAutoWhiteMode(),
+                                  bus->getLEDCurrent(), bus->getMaxCurrent());
     }
 
     void applySelectedOutputPin() {
@@ -347,44 +412,93 @@ class CardputerDisplayUsermod : public Usermod {
 
     void updateConfigMenu() {
       char optionText[48];
-      lv_label_set_text(configOptionLabels[0], "Effect key shortcuts");
-      snprintf(optionText, sizeof(optionText), "Output pin: GPIO %u", getCurrentOutputPin());
-      lv_label_set_text(configOptionLabels[1], optionText);
+      Bus* bus = BusManager::getBus(0);
+      uint8_t typeIndex = configEditMode && selectedConfigOption == 1 ? configEditValue : getCurrentStripTypeIndex();
+      uint8_t type = CARDPUTER_STRIP_TYPES[typeIndex].type;
+      uint8_t colorOrder = configEditMode && selectedConfigOption == 4 ? configEditValue : bus ? bus->getColorOrder() & 0x0F : COL_ORDER_GRB;
+      bool reversed = configEditMode && selectedConfigOption == 5 ? configEditValue != 0 : bus && bus->isReversed();
+      uint16_t ledCount = configEditMode && selectedConfigOption == 3 && !configInputActive ? configEditValue : getCurrentOutputLength();
+      uint8_t skip = configEditMode && selectedConfigOption == 6 && !configInputActive ? configEditValue : bus ? bus->skippedLeds() : 0;
+      uint16_t ledCurrent = configEditMode && selectedConfigOption == 7 && !configInputActive ? configEditValue : bus ? bus->getLEDCurrent() : LED_MILLIAMPS_DEFAULT;
+      uint16_t busMaxCurrent = configEditMode && selectedConfigOption == 8 && !configInputActive ? configEditValue : bus ? bus->getMaxCurrent() : 0;
+      uint16_t maxCurrent = configEditMode && selectedConfigOption == 9 && !configInputActive ? configEditValue : BusManager::ablMilliampsMax();
+      uint8_t whiteMode = configEditMode && selectedConfigOption == 10 ? configEditValue : bus ? bus->getAutoWhiteMode() : RGBW_MODE_MANUAL_ONLY;
 
-      if (configEditMode && selectedConfigOption == 2) {
-        snprintf(optionText, sizeof(optionText), "LED count: >%s", ledCountInput);
-      } else {
-        snprintf(optionText, sizeof(optionText), "LED count: %u", getCurrentOutputLength());
-      }
+      lv_label_set_text(configOptionLabels[0], "Effect key shortcuts");
+      snprintf(optionText, sizeof(optionText), "LED type: %s", CARDPUTER_STRIP_TYPES[typeIndex].label);
+      lv_label_set_text(configOptionLabels[1], optionText);
+      snprintf(optionText, sizeof(optionText), "Output pin: GPIO %u", getCurrentOutputPin());
       lv_label_set_text(configOptionLabels[2], optionText);
 
-      uint16_t maxCurrent = configEditMode && selectedConfigOption == 3 ? configEditValue : BusManager::ablMilliampsMax();
+      if (configEditMode && selectedConfigOption == 3 && configInputActive) {
+        snprintf(optionText, sizeof(optionText), "LED count: >%s", configInput);
+      } else {
+        snprintf(optionText, sizeof(optionText), "LED count: %u", ledCount);
+      }
+      lv_label_set_text(configOptionLabels[3], optionText);
+
+      snprintf(optionText, sizeof(optionText), "Color order: %s", CARDPUTER_COLOR_ORDERS[colorOrder < 6 ? colorOrder : 0]);
+      lv_label_set_text(configOptionLabels[4], optionText);
+      snprintf(optionText, sizeof(optionText), "Reverse: %s", reversed ? "On" : "Off");
+      lv_label_set_text(configOptionLabels[5], optionText);
+
+      if (configEditMode && selectedConfigOption == 6 && configInputActive) {
+        snprintf(optionText, sizeof(optionText), "Skip first: >%s", configInput);
+      } else {
+        snprintf(optionText, sizeof(optionText), "Skip first: %u", skip);
+      }
+      lv_label_set_text(configOptionLabels[6], optionText);
+
+      if (configEditMode && selectedConfigOption == 7 && configInputActive) {
+        snprintf(optionText, sizeof(optionText), "LED current: >%s mA", configInput);
+      } else {
+        snprintf(optionText, sizeof(optionText), "LED current: %u mA", ledCurrent);
+      }
+      lv_label_set_text(configOptionLabels[7], optionText);
+
+      if (configEditMode && selectedConfigOption == 8 && configInputActive) {
+        snprintf(optionText, sizeof(optionText), "Bus max current: >%s", configInput);
+      } else if (busMaxCurrent == 0) {
+        snprintf(optionText, sizeof(optionText), "Bus max current: Off");
+      } else {
+        snprintf(optionText, sizeof(optionText), "Bus max current: %u mA", busMaxCurrent);
+      }
+      lv_label_set_text(configOptionLabels[8], optionText);
+
       if (maxCurrent == 0) {
-        lv_label_set_text(configOptionLabels[3], "Max current: Off");
+        lv_label_set_text(configOptionLabels[9], "Max current: Off");
       } else {
         snprintf(optionText, sizeof(optionText), "Max current: %u mA", maxCurrent);
-        lv_label_set_text(configOptionLabels[3], optionText);
+        lv_label_set_text(configOptionLabels[9], optionText);
       }
-      for (uint8_t index = 0; index < 4; index++) {
+      if (configEditMode && selectedConfigOption == 9 && configInputActive) {
+        snprintf(optionText, sizeof(optionText), "Max current: >%s", configInput);
+        lv_label_set_text(configOptionLabels[9], optionText);
+      }
+      snprintf(optionText, sizeof(optionText), "RGBW mode: %s", Bus::hasWhite(type) ? CARDPUTER_WHITE_MODES[whiteMode < 5 ? whiteMode : 0] : "N/A");
+      lv_label_set_text(configOptionLabels[10], optionText);
+
+      for (uint8_t index = 0; index < CONFIG_OPTION_COUNT; index++) {
         bool selected = index == selectedConfigOption;
         lv_obj_set_style_bg_color(configOptionRows[index],
           selected && configEditMode ? lv_color_hex(0xffffd82a) : lv_color_hex(0xffde20e4), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(configOptionRows[index], selected ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_text_color(configOptionLabels[index], selected ? lv_color_black() : lv_color_white(), LV_PART_MAIN);
       }
+      lv_obj_scroll_to_view(configOptionRows[selectedConfigOption], LV_ANIM_ON);
 
-      if (configEditMode && selectedConfigOption == 2) {
+      bool numericOption = selectedConfigOption == 3 || selectedConfigOption == 6 ||
+                           selectedConfigOption == 7 || selectedConfigOption == 8 || selectedConfigOption == 9;
+      if (configEditMode && numericOption) {
         if (configInputError) {
-          char errorText[48];
-          snprintf(errorText, sizeof(errorText), "Valid range: 1-%u LEDs   C Cancel", getMaxOutputLength());
-          lv_label_set_text(configMenuFooter, errorText);
+          lv_label_set_text(configMenuFooter, "Invalid value   C Cancel");
         } else {
-          lv_label_set_text(configMenuFooter, "Digits  Enter Save  Del Erase  C Cancel");
+          lv_label_set_text(configMenuFooter, "Digits edit  Enter Save  Del Erase  C Cancel");
         }
       } else if (configEditMode) {
         lv_label_set_text(configMenuFooter, ", / Change   Enter Save   C Cancel");
       } else {
-          lv_label_set_text(configMenuFooter, "; Up  . Down  Enter Select  C Back");
+        lv_label_set_text(configMenuFooter, "; Up  . Down  Enter Select  C Back");
       }
     }
 
@@ -411,10 +525,20 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_style_border_width(divider, 0, LV_PART_MAIN);
       lv_obj_set_style_radius(divider, 0, LV_PART_MAIN);
 
-      for (uint8_t index = 0; index < 4; index++) {
-        configOptionRows[index] = lv_obj_create(configMenuScreen);
-        lv_obj_set_pos(configOptionRows[index], 6, 32 + index * 20);
-        lv_obj_set_size(configOptionRows[index], 228, 16);
+      configMenuList = lv_obj_create(configMenuScreen);
+      lv_obj_set_pos(configMenuList, 6, 28);
+      lv_obj_set_size(configMenuList, 228, 86);
+      lv_obj_set_style_bg_opa(configMenuList, LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_border_width(configMenuList, 0, LV_PART_MAIN);
+      lv_obj_set_style_radius(configMenuList, 0, LV_PART_MAIN);
+      lv_obj_set_style_pad_all(configMenuList, 0, LV_PART_MAIN);
+      lv_obj_set_scroll_dir(configMenuList, LV_DIR_VER);
+      lv_obj_set_scrollbar_mode(configMenuList, LV_SCROLLBAR_MODE_OFF);
+
+      for (uint8_t index = 0; index < CONFIG_OPTION_COUNT; index++) {
+        configOptionRows[index] = lv_obj_create(configMenuList);
+        lv_obj_set_pos(configOptionRows[index], 0, index * 19);
+        lv_obj_set_size(configOptionRows[index], 228, 18);
         lv_obj_remove_flag(configOptionRows[index], LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_bg_opa(configOptionRows[index], LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(configOptionRows[index], 0, LV_PART_MAIN);
@@ -554,16 +678,6 @@ class CardputerDisplayUsermod : public Usermod {
     }
 
     void createBatteryIndicator() {
-      lv_obj_set_pos(objects.label_date, 50, 36);
-      lv_obj_set_width(objects.label_date, 85);
-
-      lv_obj_set_pos(objects.label_current, 3, 51);
-      lv_obj_set_size(objects.label_current, 58, LV_SIZE_CONTENT);
-      lv_label_set_long_mode(objects.label_current, LV_LABEL_LONG_CLIP);
-      lv_obj_set_style_text_font(objects.label_current, &lv_font_montserrat_12, LV_PART_MAIN);
-      lv_obj_set_style_text_align(objects.label_current, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-      lv_obj_set_style_text_letter_space(objects.label_current, 0, LV_PART_MAIN);
-
       batteryLevelBar = lv_bar_create(objects.main);
       lv_obj_set_pos(batteryLevelBar, 201, 4);
       lv_obj_set_size(batteryLevelBar, 39, 12);
@@ -586,10 +700,6 @@ class CardputerDisplayUsermod : public Usermod {
       lv_obj_set_style_text_color(batteryLabel, lv_color_black(), LV_PART_MAIN);
       lv_label_set_text(batteryLabel, "--%");
 
-      lv_obj_set_pos(objects.label_freeheap, 64, 51);
-      lv_obj_set_size(objects.label_freeheap, 62, LV_SIZE_CONTENT);
-      lv_obj_set_style_text_font(objects.label_freeheap, &lv_font_montserrat_12, LV_PART_MAIN);
-      lv_obj_set_style_text_letter_space(objects.label_freeheap, 0, LV_PART_MAIN);
     }
 
     void openShortcutConfig() {
@@ -625,29 +735,122 @@ class CardputerDisplayUsermod : public Usermod {
       loadScreen(SCREEN_ID_MAIN);
     }
 
+    void startConfigEdit() {
+      Bus* bus = BusManager::getBus(0);
+      if (selectedConfigOption == 10 && (!bus || !Bus::hasWhite(bus->getType()))) return;
+      configEditMode = true;
+      configInputActive = false;
+      configInputError = false;
+      configInputLength = 0;
+      configInput[0] = '\0';
+      switch (selectedConfigOption) {
+        case 1: configEditValue = getCurrentStripTypeIndex(); break;
+        case 3: configEditValue = getCurrentOutputLength(); break;
+        case 4: configEditValue = bus ? bus->getColorOrder() & 0x0F : COL_ORDER_GRB; break;
+        case 5: configEditValue = bus && bus->isReversed(); break;
+        case 6: configEditValue = bus ? bus->skippedLeds() : 0; break;
+        case 7: configEditValue = bus ? bus->getLEDCurrent() : LED_MILLIAMPS_DEFAULT; break;
+        case 8: configEditValue = bus ? bus->getMaxCurrent() : 0; break;
+        case 9: configEditValue = BusManager::ablMilliampsMax(); break;
+        case 10: configEditValue = bus ? bus->getAutoWhiteMode() : RGBW_MODE_MANUAL_ONLY; break;
+      }
+      updateConfigMenu();
+    }
+
+    void changeConfigValue(int8_t direction) {
+      switch (selectedConfigOption) {
+        case 1: {
+          uint8_t count = sizeof(CARDPUTER_STRIP_TYPES) / sizeof(CARDPUTER_STRIP_TYPES[0]);
+          configEditValue = (configEditValue + count + direction) % count;
+          break;
+        }
+        case 4:
+          configEditValue = (configEditValue + 6 + direction) % 6;
+          break;
+        case 5:
+          configEditValue = !configEditValue;
+          break;
+        case 6:
+        case 7:
+        case 8:
+        case 9: {
+          uint16_t maximum = selectedConfigOption == 6 ? 255 : selectedConfigOption == 7 ? 255 : 65000;
+          uint16_t step = selectedConfigOption == 7 ? 10 : (selectedConfigOption == 8 || selectedConfigOption == 9) ? 100 : 1;
+          int32_t changed = (int32_t)configEditValue + direction * step;
+          configEditValue = constrain(changed, 0, maximum);
+          break;
+        }
+        case 10:
+          configEditValue = (configEditValue + RGBW_MODE_MAX + 1 + direction) % (RGBW_MODE_MAX + 1);
+          break;
+      }
+      configInputActive = false;
+      configInputError = false;
+      updateConfigMenu();
+    }
+
     void handleConfigMenuEnter() {
       if (configEditMode) {
         bool saved = false;
-        if (selectedConfigOption == 2) {
+        uint32_t value = configEditValue;
+        bool numericOption = selectedConfigOption == 3 || selectedConfigOption == 6 ||
+                             selectedConfigOption == 7 || selectedConfigOption == 8 || selectedConfigOption == 9;
+        if (numericOption && configInputActive) {
           char* end = nullptr;
-          unsigned long enteredCount = strtoul(ledCountInput, &end, 10);
-          uint16_t maxLedCount = getMaxOutputLength();
-          if (ledCountInputLength == 0 || end == ledCountInput || *end != '\0' ||
-              enteredCount < 1 || enteredCount > maxLedCount) {
+          value = strtoul(configInput, &end, 10);
+          if (configInputLength == 0 || end == configInput || *end != '\0') {
             configInputError = true;
             updateConfigMenu();
             return;
           }
-          saved = queueOutputBusChange(getCurrentOutputPin(), (uint16_t)enteredCount);
-          configInputError = !saved;
-        } else if (selectedConfigOption == 3) {
-          BusManager::setMilliampsMax(configEditValue);
+        }
+
+        if (selectedConfigOption == 9) {
+          if (value > 65000) {
+            configInputError = true;
+            updateConfigMenu();
+            return;
+          }
+          BusManager::setMilliampsMax((uint16_t)value);
           BusManager::initializeABL();
           configNeedsWrite = true;
+          saved = true;
+        } else {
+          Bus* bus = BusManager::getBus(0);
+          uint8_t typeIndex = getCurrentStripTypeIndex();
+          uint8_t type = bus ? bus->getType() : TYPE_WS2812_RGB;
+          uint16_t ledCount = getCurrentOutputLength();
+          uint8_t colorOrder = bus ? bus->getColorOrder() & 0x0F : COL_ORDER_GRB;
+          bool reversed = bus && bus->isReversed();
+          uint8_t skip = bus ? bus->skippedLeds() : 0;
+          uint8_t whiteMode = bus ? bus->getAutoWhiteMode() : RGBW_MODE_MANUAL_ONLY;
+          uint16_t ledCurrent = bus ? bus->getLEDCurrent() : LED_MILLIAMPS_DEFAULT;
+          uint16_t busMaxCurrent = bus ? bus->getMaxCurrent() : 0;
+          switch (selectedConfigOption) {
+            case 1: typeIndex = value; type = CARDPUTER_STRIP_TYPES[typeIndex].type; break;
+            case 3: ledCount = value; break;
+            case 4: colorOrder = value; break;
+            case 5: reversed = value != 0; break;
+            case 6: skip = value; break;
+            case 7: ledCurrent = value; break;
+            case 8: busMaxCurrent = value; break;
+            case 10: whiteMode = value; break;
+          }
+          if (typeIndex >= sizeof(CARDPUTER_STRIP_TYPES) / sizeof(CARDPUTER_STRIP_TYPES[0]) ||
+              ledCount == 0 || ledCount > getMaxOutputLength() || colorOrder >= 6 || skip > 255 ||
+              (skip > 0 && skip >= ledCount) || ledCurrent > 255 || busMaxCurrent > 65000 ||
+              whiteMode > RGBW_MODE_MAX ||
+              !queueOutputBusConfig(type, getCurrentOutputPin(), ledCount, colorOrder, reversed,
+                                    skip, whiteMode, ledCurrent, busMaxCurrent)) {
+            configInputError = true;
+            updateConfigMenu();
+            return;
+          }
           saved = true;
         }
         if (saved) {
           configEditMode = false;
+          configInputActive = false;
           configInputError = false;
         }
         updateConfigMenu();
@@ -658,20 +861,11 @@ class CardputerDisplayUsermod : public Usermod {
         case 0:
           openShortcutConfig();
           break;
-        case 1:
+        case 2:
           openOutputPinMenu();
           break;
-        case 2:
-          ledCountInputLength = 0;
-          ledCountInput[0] = '\0';
-          configInputError = false;
-          configEditMode = true;
-          updateConfigMenu();
-          break;
-        case 3:
-          configEditValue = BusManager::ablMilliampsMax();
-          configEditMode = true;
-          updateConfigMenu();
+        default:
+          startConfigEdit();
           break;
       }
     }
@@ -788,36 +982,33 @@ class CardputerDisplayUsermod : public Usermod {
 
           if (configMenuMode) {
             if (configEditMode) {
-              if (selectedConfigOption == 2 && key >= '0' && key <= '9') {
-                if (ledCountInputLength < sizeof(ledCountInput) - 1) {
-                  ledCountInput[ledCountInputLength++] = key;
-                  ledCountInput[ledCountInputLength] = '\0';
+              bool numericOption = selectedConfigOption == 3 || selectedConfigOption == 6 ||
+                                   selectedConfigOption == 7 || selectedConfigOption == 8 || selectedConfigOption == 9;
+              if (numericOption && key >= '0' && key <= '9') {
+                if (configInputLength < sizeof(configInput) - 1) {
+                  configInput[configInputLength++] = key;
+                  configInput[configInputLength] = '\0';
+                  configInputActive = true;
                   configInputError = false;
                 } else {
                   configInputError = true;
                 }
                 updateConfigMenu();
-              } else if (selectedConfigOption == 3 && key == ',') {
-                if (selectedConfigOption == 2 && configEditValue > 1) configEditValue--;
-                else configEditValue = configEditValue > 100 ? configEditValue - 100 : 0;
-                updateConfigMenu();
-              } else if (selectedConfigOption == 3 && key == '/') {
-                if (configEditValue <= 64900) {
-                  configEditValue = configEditValue == 0 ? 100 : configEditValue + 100;
-                } else {
-                  configEditValue = 65000;
-                }
-                updateConfigMenu();
+              } else if (key == ',') {
+                changeConfigValue(-1);
+              } else if (key == '/') {
+                changeConfigValue(1);
               } else if (key == 'c' || key == 'C') {
                 configEditMode = false;
+                configInputActive = false;
                 configInputError = false;
                 updateConfigMenu();
               }
             } else if (key == ';') {
-              selectedConfigOption = (selectedConfigOption + 3) % 4;
+              selectedConfigOption = (selectedConfigOption + CONFIG_OPTION_COUNT - 1) % CONFIG_OPTION_COUNT;
               updateConfigMenu();
             } else if (key == '.') {
-              selectedConfigOption = (selectedConfigOption + 1) % 4;
+              selectedConfigOption = (selectedConfigOption + 1) % CONFIG_OPTION_COUNT;
               updateConfigMenu();
             } else if (key == 'c' || key == 'C') {
               closeConfigMenu();
@@ -892,9 +1083,12 @@ class CardputerDisplayUsermod : public Usermod {
           }
         }
 
-        if (configMenuMode && configEditMode && selectedConfigOption == 2 && status.del) {
-          if (ledCountInputLength > 0) {
-            ledCountInput[--ledCountInputLength] = '\0';
+        bool numericOption = selectedConfigOption == 3 || selectedConfigOption == 6 ||
+                             selectedConfigOption == 7 || selectedConfigOption == 8 || selectedConfigOption == 9;
+        if (configMenuMode && configEditMode && numericOption && status.del) {
+          if (configInputLength > 0) {
+            configInput[--configInputLength] = '\0';
+            configInputActive = configInputLength > 0;
             configInputError = false;
             updateConfigMenu();
           }
@@ -1081,7 +1275,7 @@ class CardputerDisplayUsermod : public Usermod {
       // Update Free Heap
       uint32_t freeHeap = ESP.getFreeHeap();
       char heapStr[16];
-      snprintf(heapStr, sizeof(heapStr), "%luKB", (unsigned long)((freeHeap + 512) / 1024));
+      snprintf(heapStr, sizeof(heapStr), "%.1fkb", freeHeap / 1024.0f);
       lv_label_set_text(objects.label_freeheap, heapStr);
 
       // Update battery charge estimate; M5Unified reports negative values when unavailable.
