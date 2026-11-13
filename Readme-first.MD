@@ -1,68 +1,70 @@
-# WLED Cardputer: Einstieg
+# WLED Cardputer: Getting Started
 
-Dieses Dokument erklärt, was die Firmware auf dem M5Stack Cardputer macht, wie sie aufgebaut ist und wie sie gebaut und geflasht wird. Die Firmware basiert auf WLED und ergänzt dessen LED-Steuerung um das eingebaute Display und die Tastatur des Cardputers.
+This document explains what the firmware does on the M5Stack Cardputer, how it is structured, and how to build and flash it. The firmware is based on WLED and extends its LED control with the Cardputer's built-in display and keyboard.
 
-## Was das Programm macht
+## What the Firmware Does
 
-WLED läuft auf dem ESP32-S3 des Cardputers und steuert einen angeschlossenen LED-Streifen. Die WLED-Weboberfläche und die WLED-Funktionen wie Effekte, Farben, Segmente, Presets, WLAN und OTA-Updates bleiben erhalten. Zusätzlich zeigt ein LVGL-Bildschirm Statusinformationen an und die Tastatur ermöglicht die direkte Bedienung.
+WLED runs on the Cardputer's ESP32-S3 and controls a connected LED strip. The WLED web interface and features such as effects, colors, segments, presets, WiFi, and OTA updates remain available. An LVGL screen also displays status information, while the keyboard provides direct local control.
 
-Der Display-Usermod startet das Cardputer-Display und die Tastatur, lädt die LVGL-Oberfläche und liest gespeicherte Tastenbelegungen aus dem nichtflüchtigen ESP32-Speicher. In der Hauptschleife werden Tastatureingaben verarbeitet, LVGL bedient und die Statusanzeige alle 500 ms aktualisiert.
+The display usermod initializes the Cardputer display and keyboard, loads the LVGL interface, and handles local input. Its main loop processes keyboard input, services LVGL, and refreshes the status display every 500 ms. Keyboard shortcuts and the WiFi enabled/disabled state are saved in WLED configuration and restored at startup.
 
-## Bedienung
+## Controls
 
-| Eingabe | Funktion |
+| Input | Action |
 | --- | --- |
-| G0 (GPIO 0) | LEDs ein- oder ausschalten |
-| `f` | LEDs mit WLEDs konfigurierter Übergangszeit ein- oder ausblenden |
-| `,` / `/` | Helligkeit um 25 verringern / erhöhen |
-| `;` / `.` | Nächsten / vorherigen Effekt auswählen |
-| `h` | Hilfe anzeigen oder zur Hauptanzeige zurückkehren |
-| `c` | Zuordnung der Zifferntasten konfigurieren |
-| `1` bis `5` | Den für die jeweilige Taste gespeicherten Effekt starten |
+| G0 (GPIO 0) | Toggle LEDs on or off |
+| `f` | Fade LEDs using WLED's configured transition time |
+| `,` / `/` | Decrease / increase brightness by 25 |
+| `;` / `.` | Select the next / previous effect |
+| `h` | Show help or return to the main display |
+| `w` | Toggle the Cardputer's WiFi radio |
+| `c` | Open the configuration menu or go back |
+| `1` to `5` | Start the assigned effect; assign it in the effect-shortcut menu |
 
-### Effekte den Tasten 1 bis 5 zuweisen
+The `f` key uses the transition time configured in WLED. When WiFi is off, the web interface, network control, and OTA are unavailable. The WiFi state is saved in WLED configuration and restored after a restart.
 
-1. `c` drücken, um den Zuordnungsbildschirm zu öffnen.
-2. Mit `.` und `;` durch die aktuelle WLED-Effektliste blättern.
-3. `1`, `2`, `3`, `4` oder `5` drücken, um den angezeigten Effekt der entsprechenden Taste zuzuweisen.
-4. `c` drücken, um zur Hauptanzeige zurückzukehren.
+### Configuration Menu and Effect Shortcuts
 
-Die Zuordnungen werden mit der ESP32-Preferences/NVS-Funktion gespeichert und bleiben nach einem Neustart erhalten. Nicht belegte Zifferntasten starten keinen Effekt. Außerhalb des Zuordnungsbildschirms schalten sie den gespeicherten Effekt des Hauptsegments ein.
+Press `c` to open the configuration menu. Use `;` and `.` to move through the options, and Enter to select or edit an item. Press `c` to cancel an edit or go back. In numeric fields, `,` and `/` decrease or increase the value; digits can also be typed directly and removed individually with Del.
 
-## Firmware-Bausteine
+In **Effect key shortcuts**, browse the WLED effect list with `.` and `;`. Press `1` through `5` to assign the selected effect to the corresponding shortcut. To clear a shortcut, press `0` and then its number; press `c` to cancel deletion. Unassigned keys do not start an effect. Assignments are saved in WLED configuration. Older assignments stored in ESP32 Preferences are imported at startup when valid assignments are not present in WLED configuration.
 
-### WLED-Kern: `wled00/`
+The menu also configures the LED type, output pin, LED count, color order, direction, skipped LEDs, current per LED, per-output and global current limits, and RGBW white-channel mode where supported by the LED type. The LED options edit the first LED bus; configure additional buses through the normal WLED configuration interface. Bus changes are saved through WLED configuration and restart the LED output.
 
-Dieser Ordner enthält die WLED-Firmware: LED-Ausgabe und Busverwaltung, Effekte und Paletten, Helligkeit und Übergänge, Presets, Netzwerk- und Webserverfunktionen, JSON-/WebSocket-Schnittstellen sowie OTA-Updates. Der Cardputer-Build verwendet diesen Kern unverändert als Basis und ergänzt ihn durch einen Usermod.
+## Firmware Components
 
-### Cardputer-Usermod: `usermods/Cardputer_Display/`
+### WLED Core: `wled00/`
 
-`cardputer_display.cpp` bindet das M5Stack-Display und die Tastatur an WLED an. Dort liegen die Tastenbehandlung, das Ein-/Ausblenden, die Effekt-Zuordnung für `1` bis `5`, deren dauerhafte Speicherung und die periodische Aktualisierung der Statusanzeige.
+This directory contains the WLED firmware, including LED output and bus management, effects and palettes, brightness and transitions, presets, networking and web server functionality, JSON and WebSocket interfaces, and OTA updates. The Cardputer build is based on this core and extends it with a usermod.
 
-`library.json` beschreibt den Usermod und seine Bibliotheksabhängigkeiten. `lv_conf.h` konfiguriert LVGL. `lvgl_setup.h` erstellt ein 240 × 135 Pixel großes LVGL-Display, verbindet den Bildpuffer mit M5GFX und stellt den LVGL-Tick über eine FreeRTOS-Aufgabe bereit.
+### Cardputer Usermod: `usermods/Cardputer_Display/`
 
-### Display-Oberfläche: `usermods/Cardputer_Display/ui/`
+`cardputer_display.cpp` connects the display and keyboard to WLED. It handles keyboard input, the configuration and shortcut menus, LED fades, the WiFi toggle, status display, and reading and writing Cardputer settings in WLED configuration.
 
-Die C-Dateien in `ui/` enthalten die aus dem EEZ Studio-Projekt erzeugten LVGL-Bildschirme, Widgets, Stile, Schriften und Bilder. Das zugehörige Designprojekt liegt in `wled-cardputer-eez/`. Die generierten Dateien sollten nicht von Hand bearbeitet werden; Änderungen am gestalteten Hauptbildschirm gehören ins EEZ-Projekt. Hilfe- und Effekt-Zuordnungsbildschirm werden dagegen direkt vom Usermod erzeugt.
+`library.json` describes the usermod and its library dependencies. `lv_conf.h` configures LVGL. `lvgl_setup.h` creates a 240 × 135 pixel LVGL display, connects its drawing buffer to M5GFX, and provides LVGL ticks through a FreeRTOS task.
 
-### Board- und Build-Konfiguration
+### Display Interface: `usermods/Cardputer_Display/ui/`
 
-- `platformio.ini` definiert die Umgebung `m5stack_cardputer`, das Board ESP32-S3, die Bibliotheken, Build-Flags, den Display-Usermod und die Partitionstabelle.
-- `tools/WLED_ESP32_8MB.csv` legt das Partitionslayout für den 8-MB-Flash fest. Das konfigurierte Board hat keinen PSRAM.
-- `lib/NeoESP32RmtHI/` enthält den projektspezifischen ESP32-RMT-LED-Treiber.
-- `pio-scripts/` enthält PlatformIO-Hooks für Metadaten, lokale WLED-Konfiguration, Usermod-Einbindung, Web-UI-Build, Modulprüfung und Ausgabe der Firmware-Dateien.
-- `wled00/data/` enthält die WLED-Weboberfläche. Beim Build bündelt `tools/cdata.js` deren Dateien zu Firmware-Headern.
-- `requirements.txt` pinnt die Python-Buildwerkzeuge, einschließlich PlatformIO. `package.json` und `package-lock.json` definieren die Node.js-Werkzeuge für die Web-UI.
+The C files in `ui/` contain the LVGL screens, widgets, styles, fonts, and images generated from the EEZ Studio project. The design project is in `wled-cardputer-eez/`. Do not edit generated files by hand; make changes to the designed main screen in the EEZ project. The help and effect-shortcut screens are created directly by the usermod.
 
-### Start und Statusanzeige
+### Board and Build Configuration
 
-Beim Start initialisiert WLED die Board- und LED-Konfiguration. Der Cardputer-Usermod aktiviert anschließend Display und Tastatur, initialisiert LVGL, lädt den Hauptbildschirm und stellt die Effekt-Tastenzuordnungen aus dem Gerätespeicher wieder her.
+- `platformio.ini` defines the `m5stack_cardputer` environment, ESP32-S3 board, libraries, build flags, display usermod, and partition table.
+- `tools/WLED_ESP32_8MB.csv` defines the partition layout for 8 MB of flash. The configured board has no PSRAM.
+- `lib/NeoESP32RmtHI/` contains the project-specific ESP32 RMT LED driver.
+- `pio-scripts/` contains PlatformIO hooks for metadata, local WLED configuration, usermod integration, web UI building, module validation, and firmware output.
+- `wled00/data/` contains the WLED web interface. During the build, `tools/cdata.js` bundles its files into firmware headers.
+- `requirements.txt` pins the Python build tools, including PlatformIO. `package.json` and `package-lock.json` define the Node.js tools used for the web interface.
 
-Der Hauptbildschirm zeigt WLAN-Status und IP-Adresse, LED-Pin und -Anzahl, Helligkeit, aktuellen Effekt, Uhrzeit und Datum, geschätzten Stromverbrauch, den vom Cardputer gemeldeten Akku-Ladestand sowie freien Heap-Speicher. Der Akku-Prozentwert ist eine Schätzung aus der gemessenen Akkuspannung. WLAN und weitere Grundeinstellungen können wie bei WLED über dessen WLAN-Zugangspunkt und Weboberfläche eingerichtet werden.
+### Startup and Status Display
 
-## Bauen unter Windows
+At startup, WLED initializes the board and LED configuration. The Cardputer usermod then initializes the display, keyboard, and LVGL, loads the main screen, and restores the WiFi state and effect shortcuts from WLED configuration. If effect shortcuts are missing, the usermod can import older values from ESP32 Preferences and mark the WLED configuration for saving.
 
-Voraussetzungen: Git, Python und Node.js 20 oder neuer. PlatformIO ist in `requirements.txt` festgelegt. Eine virtuelle Umgebung außerhalb des Repositories vermeidet zusätzliche Build-Dateien im Quellbaum:
+The main screen shows WiFi status and IP address, LED pin and count, brightness, current effect, time and date, estimated current draw, the battery level reported by the Cardputer, and free heap memory. The battery percentage is an estimate based on measured battery voltage. Configure WiFi credentials and other basic settings through WLED's access point and web interface; the `w` key can then toggle the WiFi radio locally.
+
+## Building on Windows
+
+Requirements: Git, Python, and Node.js 20 or newer. PlatformIO is pinned in `requirements.txt`. To avoid adding build files to the source tree, create the virtual environment outside the repository:
 
 ```powershell
 $env:BUILD_VENV = "$env:LOCALAPPDATA\WLED-Cardputer-venv"
@@ -71,24 +73,24 @@ py -m venv $env:BUILD_VENV
 & "$env:BUILD_VENV\Scripts\pio.exe" run -e m5stack_cardputer
 ```
 
-Der erste Build lädt Plattform, Compiler und Bibliotheken herunter. Der PlatformIO-Hook installiert außerdem die Node.js-Pakete und bündelt die WLED-Weboberfläche.
+The first build downloads the platform, compiler, and libraries. A PlatformIO hook also installs the Node.js packages and bundles the WLED web interface.
 
-## Flashen
+## Flashing
 
-Cardputer mit einem USB-Datenkabel anschließen und den COM-Port im Windows-Geräte-Manager ermitteln. `COMx` im folgenden Befehl durch den Cardputer-Port ersetzen:
+Connect the Cardputer with a USB data cable and find its COM port in Windows Device Manager. Replace `COMx` in the following command with the Cardputer's port:
 
 ```powershell
 & "$env:LOCALAPPDATA\WLED-Cardputer-venv\Scripts\pio.exe" run -e m5stack_cardputer -t upload --upload-port COMx
 ```
 
-Das rohe PlatformIO-Image liegt unter `.pio/build/m5stack_cardputer/firmware.bin`. Der Build-Hook kopiert es zusätzlich nach `build_output/release/WLED_0.16.0-alpha_Cardputer.bin`. Für den normalen Flash-Vorgang ist PlatformIOs Upload-Target zu bevorzugen, da es das konfigurierte Board- und Partitionslayout verwendet.
+The raw PlatformIO image is at `.pio/build/m5stack_cardputer/firmware.bin`. The build hook also copies it to `build_output/release/WLED_0.16.0-alpha_Cardputer.bin`. For normal flashing, prefer PlatformIO's upload target because it uses the configured board and partition layout.
 
-## Konfiguration und Grenzen
+## Configuration and Limitations
 
-`wled00/my_config.h` wird beim ersten Build automatisch aus `wled00/my_config_sample.h` erzeugt und ist für lokale WLED-Compile-Optionen vorgesehen. WLAN-Zugangsdaten sollten nicht in gemeinsam genutzte Quellstände eingecheckt werden.
+On the first build, `wled00/my_config.h` is created from `wled00/my_config_sample.h` and is intended for local WLED compile-time options. Do not commit WiFi credentials to shared source branches.
 
-Der Standard-LED-Ausgang ist in `platformio.ini` auf GPIO 21 gesetzt. Vor dem Anschließen des LED-Streifens müssen dessen Versorgung und Masse korrekt ausgelegt und mit der Cardputer-Masse verbunden sein. Der GPIO ist ein Datenausgang und versorgt den LED-Streifen nicht mit Strom.
+The default LED output is GPIO 21, as defined in `platformio.ini`. The configuration menu edits the first LED bus and only offers suitable, available GPIO pins. Before connecting an LED strip, ensure its power supply and ground are properly sized and connect its ground to the Cardputer ground. The GPIO is a data output and does not power the LED strip.
 
-## Lizenz
+## License
 
-Das Projekt basiert auf WLED und verwendet die in `LICENSE` angegebene EUPL-1.2-Lizenz. Für WLED und eingebundene Bibliotheken gelten zusätzlich deren jeweilige Lizenzbedingungen.
+This project is based on WLED and uses the EUPL 1.2 license specified in `LICENSE`. WLED and included libraries may also be subject to their own license terms.

@@ -55,9 +55,11 @@ Built on top of [WLED](https://kno.wled.ge) by [Aircoookie](https://github.com/A
 | `0`, then `1`–`5` | In effect-key setup, clear that shortcut slot |
 
 LED strip brightness changes in steps of 25 (0–255 scale). The display backlight stays at a fixed brightness; there is no keyboard brightness control or inactivity screensaver.
-The `f` key uses WLED's configured transition time.
-In the C menu, choose **Effect key shortcuts**, browse effects with `.` and `;`, then press `1`–`5` to assign the selected effect. To clear a specific slot, press `0` followed by its number; press `c` to cancel deletion. Shortcut assignments are stored in WLED's configuration and survive restarts.
-The C menu also configures the supported single-data-pin LED type, output pin, LED count, color order, direction, skipped LEDs, per-LED current, per-output and global current limits, and RGBW white-channel mode where applicable. Use `;` and `.` to navigate, Enter to edit or save, `,` and `/` to change values, and `c` to cancel or go back. Numeric values can be typed directly; Del erases a digit. Bus changes are saved in WLED configuration and restart the LED output.
+The `f` key uses WLED's configured transition time. The `w` key toggles the Cardputer's WiFi radio; the enabled/disabled setting is saved in WLED configuration and restored after a restart. WiFi must be enabled for network access, including the web interface and OTA updates.
+
+Press `c` to open the configuration menu. Use `;` and `.` to navigate and Enter to select or edit. In **Effect key shortcuts**, browse effects with `.` and `;`, then press `1`–`5` to assign the selected effect. To clear a specific slot, press `0` followed by its number; press `c` to cancel deletion. Shortcut assignments are stored in WLED configuration and survive restarts.
+
+The same menu configures the supported single-data-pin LED type, output pin, LED count, color order, direction, skipped LEDs, per-LED current, per-output and global current limits, and RGBW white-channel mode where applicable. Use `,` and `/` to change values; numeric values can also be typed directly, and Del erases a digit. Press `c` to cancel an edit or return. Bus changes are saved in WLED configuration and restart the LED output. The menu edits the first LED bus; use WLED's normal configuration interface to manage additional buses.
 
 ## Display Info
 
@@ -76,9 +78,10 @@ The display backlight is fixed at startup and does not dim automatically.
 
 ## Building
 
-Requires [PlatformIO](https://platformio.org/).
+Requires Python and [PlatformIO](https://platformio.org/). From the repository root, install the pinned Python build tools and compile the Cardputer environment:
 
-```
+```sh
+python -m pip install -r requirements.txt
 pio run -e m5stack_cardputer
 ```
 
@@ -86,7 +89,7 @@ pio run -e m5stack_cardputer
 
 ### PlatformIO
 
-```
+```sh
 pio run -e m5stack_cardputer -t upload
 ```
 
